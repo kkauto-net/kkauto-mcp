@@ -1,0 +1,91 @@
+name: npm-publish-mcp
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      confirm_package:
+        description: "Type @kkauto/kkauto-mcp to confirm publish target"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish @kkauto/kkauto-mcp
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v'))
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm manual publish target
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CONFIRM_PACKAGE: ${{ inputs.confirm_package }}
+        run: |
+          if [ "$CONFIRM_PACKAGE" != "@kkauto/kkauto-mcp" ]; then
+            echo "confirm_package must be @kkauto/kkauto-mcp" >&2
+            exit 1
+          fi
+
+      - name: Restrict manual publishes to main
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "$GITHUB_REF_NAME" != "main" ]; then
+            echo "Manual npm publish must run from main" >&2
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Ensure npm supports trusted publishing
+        run: |
+          npm install -g npm@11
+          npm --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release tag matches package version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          expected_tag="v${version}"
+          if [ "$RELEASE_TAG" != "$expected_tag" ]; then
+            echo "Release tag must be ${expected_tag}" >&2
+            exit 1
+          fi
+
+      - name: Confirm package version is unpublished
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "@kkauto/kkauto-mcp@${version}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "@kkauto/kkauto-mcp@${version} is already published" >&2
+            exit 1
+          fi
+
+      - name: Run MCP tests
+        run: npm test
+
+      - name: Dry-run package contents
+        run: npm pack --dry-run
+
+      - name: Publish package with OIDC
+        run: npm publish --access public
