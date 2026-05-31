@@ -19,11 +19,11 @@ The adapter stays thin by design: it uses the same `/api/v2/*` routes as normal 
 - Node.js 20 or newer.
 - Active kkAuto API token from `/wtadmin/mcp` or `/wtadmin/token?type=api`.
 - Tenant-aware base URL for SaaS, or the selfhost app base URL.
-- npm/npx access to `@kkauto/kkauto-mcp@0.3.6` after publish, or a local checkout for development.
+- npm/npx access to the published `@kkauto/kkauto-mcp@0.3.6`, or a local checkout for development.
 
 ## Client Setup With npx
 
-The package release target is `@kkauto/kkauto-mcp@0.3.6`, so MCP clients can run it with `npx` without copying the website repository after publish:
+The current package release is `@kkauto/kkauto-mcp@0.3.6`, so MCP clients can run it with `npx` without copying the website repository:
 
 Recommended setup:
 
