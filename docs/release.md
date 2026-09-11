@@ -28,7 +28,7 @@ npm pack --dry-run
 ```
 
 3. Commit and push to `main`.
-4. Create a GitHub Release with tag `v<package.json version>`, for example `v0.3.6`.
+4. Create a GitHub Release with tag `v<package.json version>`, for example `v0.4.0`.
 5. Wait for `.github/workflows/npm-publish-mcp.yml` to publish through npm Trusted Publisher.
 6. Verify npm metadata:
 

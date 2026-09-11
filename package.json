@@ -1,6 +1,6 @@
 {
   "name": "@kkauto/kkauto-mcp",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "type": "module",
   "description": "MCP stdio adapter for kkAuto API v2 content tools.",
   "repository": {
@@ -28,7 +28,7 @@
     "dev": "tsx src/server.ts",
     "prepack": "npm run build",
     "start": "node dist/server.js",
-    "test": "npm run build && node --test dist/tools/fb-posts.test.js dist/tools/source-posts.test.js dist/tools/source-workflows.test.js dist/tools/source-crawlers.test.js dist/config.test.js",
+    "test": "npm run build && node --test dist/tools/fb-posts.test.js dist/tools/source-posts.test.js dist/tools/source-workflows.test.js dist/tools/source-crawlers.test.js dist/tools/data-images.test.js dist/tools/data-profile-names.test.js dist/tools/products.test.js dist/tools/fb-accounts.test.js dist/tools/fb-account-persona.test.js dist/tools/fb-fanpages.test.js dist/tools/fb-tasks.test.js dist/config.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {

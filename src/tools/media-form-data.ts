@@ -2,19 +2,50 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 
 const maxUploadBytes = 10 * 1024 * 1024;
+const maxUploadFiles = 15;
 
 export async function buildPostFormData(payload: Record<string, unknown>, mediaFiles: string[]): Promise<FormData> {
   if (Array.isArray(payload.media) && payload.media.length > 0) {
     throw new Error('Use either media URL array or media_files, not both in the same MCP call.');
   }
 
-  if (mediaFiles.length > 15) {
-    throw new Error('media_files accepts at most 15 files.');
-  }
-
   const formData = new FormData();
   const payloadWithoutMediaUrls = { ...payload, media: [] };
   formData.set('data', JSON.stringify(payloadWithoutMediaUrls));
+
+  await appendImageFiles(formData, 'media[]', mediaFiles);
+
+  return formData;
+}
+
+/**
+ * Builds multipart form data for API v2 endpoints whose contract uses an
+ * `images[]` file field plus plain scalar form fields (data-images,
+ * data-profile-names/{id}/images, products image subresources).
+ */
+export async function buildImageFilesFormData(
+  mediaFiles: string[],
+  fields: Record<string, unknown> = {},
+  fileFieldName = 'images[]',
+): Promise<FormData> {
+  const formData = new FormData();
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || value === '') {
+      continue;
+    }
+    formData.set(key, String(value));
+  }
+
+  await appendImageFiles(formData, fileFieldName, mediaFiles);
+
+  return formData;
+}
+
+async function appendImageFiles(formData: FormData, fieldName: string, mediaFiles: string[]): Promise<void> {
+  if (mediaFiles.length > maxUploadFiles) {
+    throw new Error(`media_files accepts at most ${maxUploadFiles} files.`);
+  }
 
   for (const filePath of mediaFiles) {
     const fileStats = await stat(filePath);
@@ -27,10 +58,8 @@ export async function buildPostFormData(payload: Record<string, unknown>, mediaF
 
     const buffer = await readFile(filePath);
     const blob = new Blob([buffer], { type: mimeTypeForPath(filePath) });
-    formData.append('media[]', blob, basename(filePath));
+    formData.append(fieldName, blob, basename(filePath));
   }
-
-  return formData;
 }
 
 function mimeTypeForPath(filePath: string): string {

@@ -5,7 +5,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from './config.js';
 import { ConfigError, formatUnknownError } from './errors.js';
 import { KkAutoApiClient } from './kkauto-api-client.js';
+import { registerDataImageTools } from './tools/data-images.js';
+import { registerDataProfileNameTools } from './tools/data-profile-names.js';
+import { registerFbAccountPersonaTools } from './tools/fb-account-persona.js';
+import { registerFbAccountTools } from './tools/fb-accounts.js';
+import { registerFbFanpageTools } from './tools/fb-fanpages.js';
 import { registerFbPostTools } from './tools/fb-posts.js';
+import { registerFbTaskTools } from './tools/fb-tasks.js';
+import { registerProductTools } from './tools/products.js';
 import { registerSourceCrawlerTools } from './tools/source-crawlers.js';
 import { registerSourcePostTools } from './tools/source-posts.js';
 import { registerSourceWorkflowTools } from './tools/source-workflows.js';
@@ -15,13 +22,20 @@ async function main(): Promise<void> {
   const client = new KkAutoApiClient(config);
   const server = new McpServer({
     name: 'kkauto-mcp',
-    version: '0.3.6',
+    version: '0.4.0',
   });
 
   registerFbPostTools(server, client, config);
   registerSourcePostTools(server, client, config);
   registerSourceCrawlerTools(server, client, config);
   registerSourceWorkflowTools(server, client, config);
+  registerDataImageTools(server, client, config);
+  registerDataProfileNameTools(server, client, config);
+  registerProductTools(server, client, config);
+  registerFbAccountTools(server, client, config);
+  registerFbAccountPersonaTools(server, client, config);
+  registerFbFanpageTools(server, client, config);
+  registerFbTaskTools(server, client, config);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
