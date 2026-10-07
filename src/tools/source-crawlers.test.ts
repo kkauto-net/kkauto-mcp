@@ -124,6 +124,25 @@ test('read and search tools use expected source crawler routes', async () => {
   assert.equal(client.calls[1]?.options?.query?.page, 2);
 });
 
+test('search accounts forwards platform to the API route', async () => {
+  const { server, client } = registerTools();
+
+  await server.tools.get('search_source_crawler_accounts')!({ q: 'page' });
+  await server.tools.get('search_source_crawler_accounts')!({ q: 'chan', platform: 'tiktok' });
+
+  assert.equal(client.calls[0]?.path, '/api/v2/source-crawlers/search/accounts');
+  assert.deepEqual(client.calls[0]?.options?.query, { q: 'page' });
+  assert.deepEqual(client.calls[1]?.options?.query, { q: 'chan', platform: 'tiktok' });
+});
+
+test('search accounts rejects invalid platform before API calls', async () => {
+  const { server, client } = registerTools();
+
+  await assert.rejects(() => server.tools.get('search_source_crawler_accounts')!({ platform: 'facebook_clone' }), /Invalid option/);
+
+  assert.equal(client.calls.length, 0);
+});
+
 test('relation add tools use expected source crawler routes', async () => {
   const { server, client } = registerTools();
 

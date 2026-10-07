@@ -54,7 +54,12 @@ const postsSchema = {
 };
 
 const searchSchema = {
-  q: z.string().optional(),
+  q: z.string().optional().describe('Free-text hashtag search.'),
+};
+
+const searchAccountsSchema = {
+  q: z.string().optional().describe('Free-text account search.'),
+  platform: platformType.optional().describe('Account platform to search (default facebook server-side; instagram/other return supported=false).'),
 };
 
 const createSchema = {
@@ -143,6 +148,7 @@ type ListInput = z.infer<z.ZodObject<typeof listSchema>>;
 type GetInput = z.infer<z.ZodObject<typeof getSchema>>;
 type PostsInput = z.infer<z.ZodObject<typeof postsSchema>>;
 type SearchInput = z.infer<z.ZodObject<typeof searchSchema>>;
+type SearchAccountsInput = z.infer<z.ZodObject<typeof searchAccountsSchema>>;
 type CreateInput = z.infer<z.ZodObject<typeof createSchema>>;
 type UpdateInput = z.infer<z.ZodObject<typeof updateSchema>>;
 type HashtagInput = z.infer<z.ZodObject<typeof hashtagSchema>>;
@@ -210,10 +216,10 @@ export function registerSourceCrawlerTools(server: McpServer, client: KkAutoApiC
     'search_source_crawler_accounts',
     {
       title: 'Search source crawler accounts',
-      description: 'Search active FB account options for source crawler relations.',
-      inputSchema: searchSchema,
+      description: 'Search active account options for source crawler relations. Forwards optional platform to GET /api/v2/source-crawlers/search/accounts.',
+      inputSchema: searchAccountsSchema,
     },
-    async (input: SearchInput) => jsonResult(await client.get<ApiEnvelope>('/api/v2/source-crawlers/search/accounts', { query: input })),
+    async (input: SearchAccountsInput) => jsonResult(await client.get<ApiEnvelope>('/api/v2/source-crawlers/search/accounts', { query: input })),
   );
 
   server.registerTool(

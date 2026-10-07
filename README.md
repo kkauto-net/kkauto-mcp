@@ -19,11 +19,11 @@ The adapter stays thin by design: it uses the same `/api/v2/*` routes as normal 
 - Node.js 20 or newer.
 - Active kkAuto API token from `/wtadmin/mcp` or `/wtadmin/token?type=api`.
 - Tenant-aware base URL for SaaS, or the selfhost app base URL.
-- npm/npx access to the published `@kkauto/kkauto-mcp@0.4.0`, or a local checkout for development.
+- npm/npx access to the published `@kkauto/kkauto-mcp@0.4.1`, or a local checkout for development.
 
 ## Client Setup With npx
 
-The current package release is `@kkauto/kkauto-mcp@0.4.0`, so MCP clients can run it with `npx` without copying the website repository:
+The current package release is `@kkauto/kkauto-mcp@0.4.1`, so MCP clients can run it with `npx` without copying the website repository:
 
 Recommended setup:
 
@@ -135,7 +135,7 @@ With `npx`, the MCP client machine only needs Node.js/npm plus access to the pac
 | `get_source_crawler` | Fetches one source crawler with info, hashtag, and account relations. |
 | `list_source_crawler_posts` | Lists source posts attached to one source crawler. |
 | `search_source_crawler_hashtags` | Searches hashtag options for crawler relations. |
-| `search_source_crawler_accounts` | Searches active FB account options for crawler relations. |
+| `search_source_crawler_accounts` | Searches account options with optional `q` and `platform` filters. |
 | `create_source_crawler` | Creates a source crawler with paused once defaults unless supplied otherwise. |
 | `update_source_crawler` | Updates one source crawler. The MCP adapter sends only fields supplied to the tool. |
 | `pause_source_crawler` | Pauses one source crawler. |
