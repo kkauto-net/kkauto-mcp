@@ -10,6 +10,17 @@ const postType = z.enum(['product', 'interaction']);
 const mediaType = z.enum(['video', 'image']);
 const postTo = z.enum(['group', 'fanpage', 'profile', 'all']);
 const scopeType = z.enum(['account', 'fanpage']);
+const postStatusFilter = z.union([
+  z.literal(-1).describe('Rejected (không được đăng).'),
+  z.literal(0).describe('Pending review (chờ duyệt).'),
+  z.literal(1).describe('Approved and waiting to be posted (chờ đăng).'),
+  z.literal(2).describe('Posted (đã đăng).'),
+]);
+const reviewStatus = z.union([
+  z.literal(-1).describe('Reject the post (không được đăng).'),
+  z.literal(0).describe('Send the post back to pending review (chờ duyệt).'),
+  z.literal(1).describe('Approve the post for publishing (chờ đăng).'),
+]);
 const scheduleEntry = z.object({
   comment: z.string().min(1),
   delay: z.number().min(0),
@@ -19,7 +30,7 @@ const schedulePayload = z.union([z.array(scheduleEntry), z.record(z.string(), sc
 const listSchema = {
   page: positiveInt.optional().describe('Page number, starting at 1.'),
   limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT.'),
-  status: binaryFlag.optional().describe('Filter by post status: 0 draft, 1 active/posted.'),
+  status: postStatusFilter.optional().describe('Filter by review status. Use 0 to list posts waiting for approval.'),
   post_type: postType.optional(),
   hashtags: z.string().optional().describe('Hashtag filter passed through to the kkAuto API.'),
 };
@@ -65,6 +76,15 @@ const getSchema = {
   id: positiveInt,
 };
 
+const statusSchema = {
+  id: positiveInt,
+  status: reviewStatus.describe('Review status to set: 1 approve, -1 reject, 0 pending review. Status 2 (đã đăng) is runtime-managed.'),
+};
+
+const bulkReviewSchema = {
+  post_ids: z.array(positiveInt).min(1).max(500).describe('FB post ids to update in one call (maximum 500). Unknown ids are skipped and reported.'),
+};
+
 const deleteSchema = {
   id: positiveInt,
   confirm: z.boolean().describe('Must be true for deletion.'),
@@ -76,6 +96,8 @@ type ListInput = z.infer<z.ZodObject<typeof listSchema>>;
 type CreateInput = z.infer<z.ZodObject<typeof createSchema>>;
 type UpdateInput = z.infer<z.ZodObject<typeof updateSchema>>;
 type GetInput = z.infer<z.ZodObject<typeof getSchema>>;
+type StatusInput = z.infer<z.ZodObject<typeof statusSchema>>;
+type BulkReviewInput = z.infer<z.ZodObject<typeof bulkReviewSchema>>;
 type DeleteInput = z.infer<z.ZodObject<typeof deleteSchema>>;
 
 export function registerFbPostTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
@@ -105,6 +127,56 @@ export function registerFbPostTools(server: McpServer, client: KkAutoApiClient, 
     },
     async (input: GetInput) => {
       const response = await client.get<ApiEnvelope>(`/api/v2/fb-posts/${input.id}`);
+
+      return jsonResult(response);
+    },
+  );
+
+  server.registerTool(
+    'update_fb_post_status',
+    {
+      title: 'Update FB post review status',
+      description:
+        'Approve (1), reject (-1), or return an FB post to pending review (0) through kkAuto API v2. Approving makes the post eligible for client pickup and publishing.',
+      inputSchema: statusSchema,
+    },
+    async (input: StatusInput) => {
+      const response = await client.patch<ApiEnvelope>(`/api/v2/fb-posts/${input.id}/status`, {
+        body: { status: input.status },
+      });
+
+      return jsonResult(response);
+    },
+  );
+
+  server.registerTool(
+    'bulk_approve_fb_posts',
+    {
+      title: 'Bulk approve FB posts',
+      description:
+        'Approve up to 500 FB posts in one call through kkAuto API v2. Approved posts become eligible for client pickup and publishing; unknown ids are skipped.',
+      inputSchema: bulkReviewSchema,
+    },
+    async (input: BulkReviewInput) => {
+      const response = await client.post<ApiEnvelope>('/api/v2/fb-posts/bulk-approve', {
+        body: { post_ids: input.post_ids },
+      });
+
+      return jsonResult(response);
+    },
+  );
+
+  server.registerTool(
+    'bulk_reject_fb_posts',
+    {
+      title: 'Bulk reject FB posts',
+      description: 'Reject up to 500 FB posts in one call through kkAuto API v2; unknown ids are skipped.',
+      inputSchema: bulkReviewSchema,
+    },
+    async (input: BulkReviewInput) => {
+      const response = await client.post<ApiEnvelope>('/api/v2/fb-posts/bulk-reject', {
+        body: { post_ids: input.post_ids },
+      });
 
       return jsonResult(response);
     },

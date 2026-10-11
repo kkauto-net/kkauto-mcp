@@ -110,8 +110,11 @@ With `npx`, the MCP client machine only needs Node.js/npm plus access to the pac
 
 | Tool | Purpose |
 | --- | --- |
-| `list_fb_posts` | Lists FB posts with optional `page`, `limit`, `status`, `post_type`, and `hashtags` filters. |
-| `get_fb_post` | Fetches one FB post by `id`. |
+| `list_fb_posts` | Lists FB posts with optional `page`, `limit`, `status` (-1 rejected, 0 pending review, 1 approved, 2 posted), `post_type`, and `hashtags` filters. Use `status=0` to list posts waiting for review. |
+| `get_fb_post` | Fetches one FB post by `id`, including resolved media URLs, hashtags, decoded comment/seeding payloads, and the Source Post origin flag. |
+| `update_fb_post_status` | Approves (1), rejects (-1), or returns (0) one FB post to pending review through the dedicated status route. |
+| `bulk_approve_fb_posts` | Approves up to 500 FB posts in one call; unknown ids are skipped and reported. |
+| `bulk_reject_fb_posts` | Rejects up to 500 FB posts in one call; unknown ids are skipped and reported. |
 | `create_fb_post` | Creates an FB post using JSON payloads, remote media URLs, or direct local image uploads. Defaults `assistant_id=1`, `status=KK_MCP_DEFAULT_STATUS`, `file_download=0`, and `media=[]`. |
 | `update_fb_post` | Updates one FB post. The MCP adapter sends only fields supplied to the tool. `media` / `media_files` are omitted unless explicitly provided. |
 | `delete_fb_post` | Deletes one FB post only when delete is enabled and each call includes `confirm=true` plus a `reason`. |
@@ -124,6 +127,8 @@ With `npx`, the MCP client machine only needs Node.js/npm plus access to the pac
 | `create_source_post` | Creates a source post with required source metadata and API-compatible defaults. |
 | `update_source_post` | Updates one source post. The MCP adapter sends only fields supplied to the tool. |
 | `update_source_post_status` | Updates one source post workflow status through the dedicated status route. |
+| `bulk_approve_source_posts` | Marks up to 500 source posts approved (`workflow_status=approved`) in one call; unknown ids are skipped and reported. |
+| `bulk_reject_source_posts` | Marks up to 500 source posts rejected (`workflow_status=rejected`) in one call; unknown ids are skipped and reported. |
 | `delete_source_post` | Deletes one source post only when delete is enabled and each call includes `confirm=true` plus a `reason`. |
 | `list_source_workflows_by_hashtag` | Finds Source Workflows that include a source hashtag, defaulting to enabled AI-agent workflows. |
 | `get_source_workflow_agent_context` | Fetches read-only Source-to-FB workflow context for enabled `consumer_mode=ai_agent` workflows without creating workflow runs, logs, mappings, or FB Posts. |

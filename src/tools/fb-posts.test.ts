@@ -4,6 +4,7 @@ import { open, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 import type { KkAutoApiClient } from '../kkauto-api-client.js';
 import type { ApiRequestOptions, KkAutoMcpConfig } from '../types.js';
 import { registerFbPostTools } from './fb-posts.js';
@@ -13,8 +14,10 @@ type ToolHandler = (input: Record<string, unknown>) => Promise<unknown>;
 class FakeServer {
   public readonly tools = new Map<string, ToolHandler>();
 
-  registerTool(name: string, _definition: unknown, handler: ToolHandler): void {
-    this.tools.set(name, handler);
+  registerTool(name: string, definition: { inputSchema?: z.ZodRawShape }, handler: ToolHandler): void {
+    const schema = z.object(definition.inputSchema ?? {});
+
+    this.tools.set(name, async (input) => handler(schema.parse(input)));
   }
 }
 
@@ -34,6 +37,11 @@ class FakeClient {
   async put<T>(path: string, options?: ApiRequestOptions): Promise<T> {
     this.calls.push({ method: 'PUT', path, options });
     return { status: 'success', data: { id: 7 } } as T;
+  }
+
+  async patch<T>(path: string, options?: ApiRequestOptions): Promise<T> {
+    this.calls.push({ method: 'PATCH', path, options });
+    return { status: 'success', data: { id: 7, status: 1 } } as T;
   }
 
   async delete<T>(path: string, options?: ApiRequestOptions): Promise<T> {
@@ -65,6 +73,9 @@ test('registers exactly the supported FB post tools', () => {
   assert.deepEqual([...server.tools.keys()], [
     'list_fb_posts',
     'get_fb_post',
+    'update_fb_post_status',
+    'bulk_approve_fb_posts',
+    'bulk_reject_fb_posts',
     'create_fb_post',
     'update_fb_post',
     'delete_fb_post',
@@ -78,6 +89,59 @@ test('delete is disabled by default before any API call', async () => {
   await assert.rejects(
     () => server.tools.get('delete_fb_post')!({ id: 7, confirm: true, reason: 'test' }),
     /disabled/,
+  );
+  assert.equal(client.calls.length, 0);
+});
+
+test('list forwards every review status filter value', async () => {
+  const { server, client } = registerTools();
+
+  await server.tools.get('list_fb_posts')!({ status: 0, limit: 5 });
+  await server.tools.get('list_fb_posts')!({ status: -1 });
+
+  assert.equal(client.calls[0]?.options?.query?.status, 0);
+  assert.equal(client.calls[1]?.options?.query?.status, -1);
+});
+
+test('update_fb_post_status patches the review status route', async () => {
+  const { server, client } = registerTools();
+
+  await server.tools.get('update_fb_post_status')!({ id: 7, status: 1 });
+  await server.tools.get('update_fb_post_status')!({ id: 7, status: -1 });
+
+  assert.equal(client.calls[0]?.method, 'PATCH');
+  assert.equal(client.calls[0]?.path, '/api/v2/fb-posts/7/status');
+  assert.deepEqual(client.calls[0]?.options?.body, { status: 1 });
+  assert.deepEqual(client.calls[1]?.options?.body, { status: -1 });
+});
+
+test('update_fb_post_status rejects the runtime-managed posted status', async () => {
+  const { server, client } = registerTools();
+
+  await assert.rejects(() => server.tools.get('update_fb_post_status')!({ id: 7, status: 2 }));
+  assert.equal(client.calls.length, 0);
+});
+
+test('bulk approve and reject post the id list to the bulk routes', async () => {
+  const { server, client } = registerTools();
+
+  await server.tools.get('bulk_approve_fb_posts')!({ post_ids: [1, 2, 3] });
+  await server.tools.get('bulk_reject_fb_posts')!({ post_ids: [4] });
+
+  assert.deepEqual(client.calls.map((call) => [call.method, call.path]), [
+    ['POST', '/api/v2/fb-posts/bulk-approve'],
+    ['POST', '/api/v2/fb-posts/bulk-reject'],
+  ]);
+  assert.deepEqual(client.calls[0]?.options?.body, { post_ids: [1, 2, 3] });
+  assert.deepEqual(client.calls[1]?.options?.body, { post_ids: [4] });
+});
+
+test('bulk review rejects empty and oversized id lists before any API call', async () => {
+  const { server, client } = registerTools();
+
+  await assert.rejects(() => server.tools.get('bulk_approve_fb_posts')!({ post_ids: [] }));
+  await assert.rejects(() =>
+    server.tools.get('bulk_reject_fb_posts')!({ post_ids: Array.from({ length: 501 }, (_, index) => index + 1) }),
   );
   assert.equal(client.calls.length, 0);
 });

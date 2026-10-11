@@ -77,6 +77,8 @@ test('registers exactly the supported source post tools', () => {
     'create_source_post',
     'update_source_post',
     'update_source_post_status',
+    'bulk_approve_source_posts',
+    'bulk_reject_source_posts',
     'delete_source_post',
   ]);
   assert.equal([...server.tools.keys()].some((name) => name.includes('random')), false);
@@ -182,6 +184,30 @@ test('status update uses PATCH and requires an explicit status', async () => {
   assert.equal(client.calls[0]?.method, 'PATCH');
   assert.equal(client.calls[0]?.path, '/api/v2/source-posts/7/status');
   assert.deepEqual(client.calls[0]?.options?.body, { workflow_status: 'rejected', notes: 'duplicate' });
+});
+
+test('bulk approve and reject post the id list to the bulk status routes', async () => {
+  const { server, client } = registerTools();
+
+  await server.tools.get('bulk_approve_source_posts')!({ post_ids: [11, 12] });
+  await server.tools.get('bulk_reject_source_posts')!({ post_ids: [13] });
+
+  assert.deepEqual(client.calls.map((call) => [call.method, call.path]), [
+    ['POST', '/api/v2/source-posts/bulk-approve'],
+    ['POST', '/api/v2/source-posts/bulk-reject'],
+  ]);
+  assert.deepEqual(client.calls[0]?.options?.body, { post_ids: [11, 12] });
+  assert.deepEqual(client.calls[1]?.options?.body, { post_ids: [13] });
+});
+
+test('bulk review rejects empty and oversized id lists before any API call', async () => {
+  const { server, client } = registerTools();
+
+  await assert.rejects(() => server.tools.get('bulk_approve_source_posts')!({ post_ids: [] }));
+  await assert.rejects(() =>
+    server.tools.get('bulk_reject_source_posts')!({ post_ids: Array.from({ length: 501 }, (_, index) => index + 1) }),
+  );
+  assert.equal(client.calls.length, 0);
 });
 
 test('delete is disabled by default before preflight', async () => {

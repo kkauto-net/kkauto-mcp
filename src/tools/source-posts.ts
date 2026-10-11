@@ -124,6 +124,10 @@ const statusSchema = {
   notes: z.string().optional(),
 };
 
+const bulkReviewSchema = {
+  post_ids: z.array(positiveInt).min(1).max(500).describe('Source post ids to update in one call (maximum 500). Unknown ids are skipped and reported.'),
+};
+
 const deleteSchema = {
   id: positiveInt,
   confirm: z.boolean().describe('Must be true for deletion.'),
@@ -139,6 +143,7 @@ type SearchInput = z.infer<z.ZodObject<typeof searchSchema>>;
 type ByPlatformInput = z.infer<z.ZodObject<typeof byPlatformSchema>>;
 type ByHashtagInput = z.infer<z.ZodObject<typeof byHashtagSchema>>;
 type StatusInput = z.infer<z.ZodObject<typeof statusSchema>>;
+type BulkReviewInput = z.infer<z.ZodObject<typeof bulkReviewSchema>>;
 type DeleteInput = z.infer<z.ZodObject<typeof deleteSchema>>;
 
 export function registerSourcePostTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
@@ -290,6 +295,40 @@ export function registerSourcePostTools(server: McpServer, client: KkAutoApiClie
 
       const response = await client.patch<ApiEnvelope>(`/api/v2/source-posts/${input.id}/status`, {
         body: pruneUndefined({ workflow_status: status, notes: input.notes }),
+      });
+
+      return jsonResult(response);
+    },
+  );
+
+  server.registerTool(
+    'bulk_approve_source_posts',
+    {
+      title: 'Bulk approve source posts',
+      description:
+        'Mark up to 500 source posts as approved (workflow_status=approved) in one call through kkAuto API v2. Unknown ids are skipped and reported.',
+      inputSchema: bulkReviewSchema,
+    },
+    async (input: BulkReviewInput) => {
+      const response = await client.post<ApiEnvelope>('/api/v2/source-posts/bulk-approve', {
+        body: { post_ids: input.post_ids },
+      });
+
+      return jsonResult(response);
+    },
+  );
+
+  server.registerTool(
+    'bulk_reject_source_posts',
+    {
+      title: 'Bulk reject source posts',
+      description:
+        'Mark up to 500 source posts as rejected (workflow_status=rejected) in one call through kkAuto API v2. Unknown ids are skipped and reported.',
+      inputSchema: bulkReviewSchema,
+    },
+    async (input: BulkReviewInput) => {
+      const response = await client.post<ApiEnvelope>('/api/v2/source-posts/bulk-reject', {
+        body: { post_ids: input.post_ids },
       });
 
       return jsonResult(response);
