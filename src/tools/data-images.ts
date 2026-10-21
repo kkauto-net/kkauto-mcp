@@ -1,185 +1,98 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { KkAutoApiClient } from '../kkauto-api-client.js';
-import type { ApiEnvelope, KkAutoMcpConfig } from '../types.js';
-import { buildImageFilesFormData } from './media-form-data.js';
-import { appliedLimit, guardedDelete, jsonResult, pruneUndefined } from './shared.js';
+import type { KkAutoMcpConfig } from '../types.js';
+import { flag, id, limit, page, search } from './schemas.js';
+import { registerResourceTools, type ResourceSpec } from './resource.js';
 
-const positiveInt = z.number().int().positive();
-const binaryFlag = z.union([z.literal(0), z.literal(1)]);
+/**
+ * media: data images (upload/CRUD) and data video (presigned upload/CRUD).
+ */
 
-const listSchema = {
-  page: positiveInt.optional().describe('Page number, starting at 1.'),
-  limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT.'),
-  category_id: positiveInt.optional().describe('Exact-match category filter.'),
-  approve: binaryFlag.optional().describe('Exact-match approval filter: 0 or 1.'),
-  search: z.string().optional().describe('Partial match on the image original name.'),
+export const dataImageSpec: ResourceSpec = {
+  name: 'manage_data_image',
+  title: 'Manage data images',
+  description: 'kkAuto API v2 image library: list, read, upload (URLs or local files), update, delete, random pick.',
+  actions: {
+    list: {
+      title: 'List images',
+      description: 'Paginated image list with category/approval filters.',
+      method: 'GET',
+      path: '/api/v2/data-images',
+      query: ['page', 'limit', 'search', 'category_id', 'approve'],
+      input: {
+        page: page(),
+        limit: limit(),
+        search: search('Partial match on the original file name.'),
+        category_id: id('Category id.').optional(),
+        approve: flag('Approval filter.').optional(),
+      },
+    },
+    get: {
+      title: 'Get image',
+      description: 'One image row by id with its public URL.',
+      method: 'GET',
+      path: '/api/v2/data-images/{id}',
+      input: { id: id('Image id.') },
+    },
+    search: {
+      title: 'Search images',
+      description: 'Exact name or partial search; exactly one of name/search.',
+      method: 'GET',
+      path: '/api/v2/data-images/search',
+      query: ['page', 'limit', 'name', 'search', 'category_id'],
+      input: {
+        page: page(),
+        limit: limit(),
+        name: z.string().optional().describe('Exact original file name.'),
+        search: search('Partial match on the original file name.'),
+        category_id: id('Category id.').optional(),
+      },
+    },
+    random: {
+      title: 'Random image',
+      description: 'Least-used random image, optionally filtered.',
+      method: 'GET',
+      path: '/api/v2/data-images/random',
+      query: ['category_id', 'approve'],
+      input: { category_id: id('Category id.').optional(), approve: flag('Approval filter.').optional() },
+    },
+    create: {
+      title: 'Upload images',
+      description: 'Upload remote image URLs (JSON) or local files (multipart via media_files).',
+      method: 'POST',
+      path: '/api/v2/data-images',
+      input: {
+        media_files: z.array(z.string().min(1)).max(15).optional().describe('Local image file paths on the MCP client machine.'),
+        images: z.array(z.string().url()).max(15).optional().describe('Remote image URLs to download. Do not mix with media_files.'),
+        category_id: id('Category id. Defaults to 1.').optional(),
+        alt: z.string().max(255).optional().describe('Alt text applied to every uploaded image.'),
+      },
+    },
+    update: {
+      title: 'Update image',
+      description: 'Update category, approval, name or alt text.',
+      method: 'PUT',
+      path: '/api/v2/data-images/{id}',
+      input: {
+        id: id('Image id.'),
+        category_id: id('Category id.').optional(),
+        approve: flag('Approval flag.').optional(),
+        original_name: z.string().max(255).optional().describe('Original file name.'),
+        alt: z.string().max(255).optional().describe('Alt text.'),
+      },
+    },
+    delete: {
+      title: 'Delete image',
+      description: 'Delete one image (blob + row). Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/data-images/{id}',
+      input: { id: id('Image id.') },
+      guard: 'delete',
+    },
+  },
 };
-
-const createSchema = {
-  images: z
-    .array(z.string().url())
-    .max(15)
-    .optional()
-    .describe('Remote image URLs to download. Use media_files for local uploads instead; do not mix.'),
-  media_files: z.array(z.string().min(1)).optional().describe('Local image file paths on the MCP client machine for direct multipart upload.'),
-  category_id: positiveInt.optional().describe('Category id. Defaults to 1 when omitted.'),
-  alt: z.string().optional().describe('Shared alt text applied to the uploaded or downloaded images.'),
-};
-
-const updateSchema = {
-  id: positiveInt,
-  category_id: positiveInt.optional(),
-  approve: binaryFlag.optional(),
-  original_name: z.string().max(255).optional(),
-  alt: z.string().max(255).optional(),
-};
-
-const getSchema = {
-  id: positiveInt,
-};
-
-const searchSchema = {
-  name: z.string().optional().describe('Exact lookup on original_name. Mutually exclusive with search.'),
-  search: z.string().optional().describe('Partial match on original_name. Mutually exclusive with name.'),
-  category_id: positiveInt.optional(),
-  page: positiveInt.optional(),
-  limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT.'),
-};
-
-const deleteSchema = {
-  id: positiveInt,
-  confirm: z.boolean().describe('Must be true for deletion.'),
-  reason: z.string().min(1).describe('Human-readable reason for audit context.'),
-  expected_name: z.string().min(1).optional().describe('Optional original_name guard checked before delete.'),
-};
-
-type ListInput = z.infer<z.ZodObject<typeof listSchema>>;
-type CreateInput = z.infer<z.ZodObject<typeof createSchema>>;
-type UpdateInput = z.infer<z.ZodObject<typeof updateSchema>>;
-type GetInput = z.infer<z.ZodObject<typeof getSchema>>;
-type SearchInput = z.infer<z.ZodObject<typeof searchSchema>>;
-type DeleteInput = z.infer<z.ZodObject<typeof deleteSchema>>;
 
 export function registerDataImageTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
-  server.registerTool(
-    'list_data_images',
-    {
-      title: 'List data images',
-      description: 'List kkAuto API v2 data images with optional filters. Does not expose the random endpoint.',
-      inputSchema: listSchema,
-    },
-    async (input: ListInput) => {
-      const response = await client.get<ApiEnvelope>('/api/v2/data-images', {
-        query: { ...input, limit: appliedLimit(input.limit, config) },
-      });
-
-      return jsonResult(response ?? { status: 'success', data: [], pagination: null });
-    },
-  );
-
-  server.registerTool(
-    'get_data_image',
-    {
-      title: 'Get data image',
-      description: 'Get one kkAuto API v2 data image row by id.',
-      inputSchema: getSchema,
-    },
-    async (input: GetInput) => {
-      const response = await client.get<ApiEnvelope>(`/api/v2/data-images/${input.id}`);
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'search_data_images',
-    {
-      title: 'Search data images',
-      description: 'Search kkAuto API v2 data images by exact name or partial match on the image original name.',
-      inputSchema: searchSchema,
-    },
-    async (input: SearchInput) => {
-      if (input.name === undefined && input.search === undefined) {
-        throw new Error('search_data_images requires at least one of name or search');
-      }
-
-      if (input.name !== undefined && input.search !== undefined) {
-        throw new Error('search_data_images accepts either name or search, not both');
-      }
-
-      const response = await client.get<ApiEnvelope>('/api/v2/data-images/search', {
-        query: { ...input, limit: appliedLimit(input.limit, config) },
-      });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'create_data_image',
-    {
-      title: 'Create data image',
-      description:
-        'Upload one or more images to kkAuto API v2 data-images. Use images for remote URLs or media_files for local image paths; do not mix.',
-      inputSchema: createSchema,
-    },
-    async (input: CreateInput) => {
-      const { images, media_files: mediaFiles, ...fields } = input;
-      const payload = pruneUndefined({ ...fields });
-
-      if (images?.length && mediaFiles?.length) {
-        throw new Error('create_data_image accepts either images URLs or media_files, not both');
-      }
-
-      const response = mediaFiles?.length
-        ? await client.post<ApiEnvelope>('/api/v2/data-images', {
-            formData: await buildImageFilesFormData(mediaFiles, payload),
-          })
-        : await client.post<ApiEnvelope>('/api/v2/data-images', { body: { images: images ?? [], ...payload } });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'update_data_image',
-    {
-      title: 'Update data image',
-      description: 'Update metadata of one kkAuto API v2 data image row. Fields not supplied are omitted from the MCP payload.',
-      inputSchema: updateSchema,
-    },
-    async (input: UpdateInput) => {
-      const { id, ...fields } = input;
-      const payload = pruneUndefined(fields);
-
-      if (Object.keys(payload).length === 0) {
-        throw new Error('At least one field is required for update_data_image');
-      }
-
-      const response = await client.put<ApiEnvelope>(`/api/v2/data-images/${id}`, { body: payload });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'delete_data_image',
-    {
-      title: 'Delete data image',
-      description: 'Delete one kkAuto API v2 data image row. Disabled unless KK_MCP_ENABLE_DELETE=true.',
-      inputSchema: deleteSchema,
-    },
-    async (input: DeleteInput) =>
-      guardedDelete({
-        client,
-        config,
-        toolName: 'delete_data_image',
-        id: input.id,
-        getPath: `/api/v2/data-images/${input.id}`,
-        deletePath: `/api/v2/data-images/${input.id}`,
-        input,
-        extractName: (data) => (typeof data.original_name === 'string' ? data.original_name : undefined),
-      }),
-  );
+  registerResourceTools(server, client, config, dataImageSpec);
 }

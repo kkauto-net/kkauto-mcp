@@ -1,11 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { KkAutoApiClient } from '../kkauto-api-client.js';
-import type { ApiEnvelope, KkAutoMcpConfig } from '../types.js';
-import { appliedLimit, guardedDelete, jsonResult, pruneUndefined } from './shared.js';
+import type { KkAutoMcpConfig } from '../types.js';
+import { flag, id, limit, page, search } from './schemas.js';
+import { registerResourceTools, type ResourceSpec } from './resource.js';
 
-const positiveInt = z.number().int().positive();
 const fanpageStatus = z.enum(['active', 'inactive']);
+const mediaType = z.enum(['avatar', 'cover']);
 
 const writableFields = {
   fanpage_name: z.string().min(3).describe('Fanpage name, min length 3.'),
@@ -14,7 +15,7 @@ const writableFields = {
   status: fanpageStatus.optional().describe('Defaults to active.'),
   fb_role: z.string().optional(),
   total_likes: z.number().int().min(0).optional().describe('Defaults to 0.'),
-  assistant_ids: z.array(positiveInt).optional(),
+  assistant_ids: z.array(id('Assistant id.')).optional(),
   fanpage_introduction: z.string().optional(),
   fanpage_category: z.string().optional(),
   fanpage_location: z.string().optional(),
@@ -24,211 +25,264 @@ const writableFields = {
   ai_instruction: z.string().optional(),
   fanpage_cover_prompt: z.string().optional(),
   fanpage_avatar_prompt: z.string().optional(),
-  account_ids: z.array(positiveInt).optional().describe('Linked FB account ids; presence replaces the relation set.'),
-  hashtags: z.array(positiveInt).optional().describe('Hashtag ids; presence replaces the relation set.'),
-  tag_ids: z.array(positiveInt).optional().describe('Tag ids; presence replaces the relation set.'),
+  account_ids: z.array(id('FB account id.')).optional().describe('Linked FB account ids; presence replaces the relation set.'),
+  hashtags: z.array(id('Hashtag id.')).optional().describe('Hashtag ids; presence replaces the relation set.'),
+  tag_ids: z.array(id('Tag id.')).optional().describe('Tag ids; presence replaces the relation set.'),
 };
 
-const listSchema = {
-  page: positiveInt.optional(),
-  limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT and the API limit of 1000.'),
-  status: fanpageStatus.optional(),
-  search: z.string().optional(),
-  search_field: z.enum(['all', 'fanpage_name', 'fanpage_link', 'fanpage_uid']).optional().describe('Default is all.'),
-  missing_uid: z.union([z.literal(0), z.literal(1)]).optional().describe('1 returns only fanpages with an empty UID.'),
-  account_id: positiveInt.optional().describe('Filter by linked FB account id.'),
+const groupPath = {
+  id: id('Fanpage id.'),
+  group_id: id('Group id.'),
 };
 
-const searchSchema = {
-  q: z.string().min(1).optional().describe('Text search over fanpage name, link, and UID. Use either q or type+value.'),
-  type: z.enum(['id', 'fanpage_uid', 'fanpage_link']).optional().describe('Exact lookup type. Required with value when q is omitted.'),
-  value: z.string().min(1).optional().describe('Exact lookup value. Required with type when q is omitted.'),
-  page: positiveInt.optional(),
-  limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT and the API limit of 1000.'),
+export const fbFanpageSpec: ResourceSpec = {
+  name: 'manage_fb_fanpage',
+  title: 'Manage FB fanpages',
+  description: 'kkAuto API v2 Facebook fanpages: CRUD, page tokens, media, linked groups, assistants, and task creation.',
+  actions: {
+    list: {
+      title: 'List FB fanpages',
+      description: 'Paginated fanpage list with status, UID, and linked-account filters.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages',
+      query: ['page', 'limit', 'status', 'search', 'search_field', 'missing_uid', 'account_id'],
+      input: {
+        page: page(),
+        limit: limit(),
+        status: fanpageStatus.optional(),
+        search: search(),
+        search_field: z.enum(['all', 'fanpage_name', 'fanpage_link', 'fanpage_uid']).optional().describe('Default is all.'),
+        missing_uid: flag('1 returns only fanpages with an empty UID.').optional(),
+        account_id: id('Linked FB account id.').optional(),
+      },
+    },
+    search: {
+      title: 'Search FB fanpages',
+      description: 'Text search, or one exact lookup by type and value.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/search',
+      query: ['q', 'type', 'value', 'page', 'limit'],
+      input: {
+        q: z.string().min(1).optional().describe('Text search over name, link, and UID.'),
+        type: z.enum(['id', 'fanpage_uid', 'fanpage_link']).optional().describe('Exact lookup type; pairs with value.'),
+        value: z.string().min(1).optional().describe('Exact lookup value; pairs with type.'),
+        page: page(),
+        limit: limit(),
+      },
+    },
+    'missing-uid': {
+      title: 'List FB fanpages missing UID',
+      description: 'Fanpages without a Facebook Page UID yet.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/missing-uid',
+      query: ['page', 'limit', 'status', 'search'],
+      input: { page: page(), limit: limit(), status: fanpageStatus.optional(), search: search() },
+    },
+    get: {
+      title: 'Get FB fanpage',
+      description: 'One fanpage by id.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/{id}',
+      input: { id: id('Fanpage id.') },
+    },
+    create: {
+      title: 'Create FB fanpage',
+      description: 'Create one fanpage with info fields and account/hashtag/tag relations.',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages',
+      input: writableFields,
+    },
+    update: {
+      title: 'Update FB fanpage',
+      description: 'Partial update; relation fields replace their sets when present.',
+      method: 'PUT',
+      path: '/api/v2/fb-fanpages/{id}',
+      input: {
+        id: id('Fanpage id.'),
+        ...writableFields,
+        fanpage_name: writableFields.fanpage_name.optional(),
+        fanpage_link: writableFields.fanpage_link.optional(),
+      },
+    },
+    delete: {
+      title: 'Delete FB fanpage',
+      description: 'Delete one fanpage. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/fb-fanpages/{id}',
+      input: { id: id('Fanpage id.') },
+      guard: 'delete',
+    },
+    status: {
+      title: 'Update fanpage status',
+      description: 'Set fanpage status; reactivating clears the block flag.',
+      method: 'PATCH',
+      path: '/api/v2/fb-fanpages/{id}/status',
+      input: {
+        id: id('Fanpage id.'),
+        status: z.enum(['active', 'blocked', 'inactive', 'disabled']),
+      },
+    },
+    role: {
+      title: 'Update fanpage role',
+      description: 'Set the fanpage seeding role.',
+      method: 'PUT',
+      path: '/api/v2/fb-fanpages/{id}/role',
+      input: { id: id('Fanpage id.'), fb_role: z.enum(['normal', 'seeding']) },
+    },
+    'page-token': {
+      title: 'Save page token',
+      description: 'Store a manually supplied page access token (encrypted server-side).',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages/{id}/page-token',
+      input: { id: id('Fanpage id.'), page_access_token: z.string().min(1) },
+    },
+    'exchange-page-token': {
+      title: 'Exchange page token',
+      description: 'Derive a long-lived page token from the admin account user token.',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages/{id}/page-token/exchange',
+      input: { id: id('Fanpage id.') },
+      guard: 'confirm',
+    },
+    'reveal-page-token': {
+      title: 'Reveal page token',
+      description: 'Return the decrypted page token; the API logs the reveal.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/{id}/page-token/reveal',
+      input: { id: id('Fanpage id.') },
+      admin: true,
+    },
+    'clear-page-token': {
+      title: 'Clear page token',
+      description: 'Delete the stored page token. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/fb-fanpages/{id}/page-token',
+      input: { id: id('Fanpage id.') },
+      guard: 'delete',
+    },
+    media: {
+      title: 'Upload fanpage media',
+      description: 'Upload one avatar or cover image from local disk (multipart, media field).',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages/{id}/media',
+      body: 'form',
+      filesField: 'media',
+      input: {
+        id: id('Fanpage id.'),
+        media_type: mediaType,
+        media_files: z.array(z.string().min(1)).length(1).describe('Exactly one local image file path.'),
+        prompt: z.string().optional().describe('Optional AI prompt stored with the image.'),
+      },
+    },
+    'delete-media': {
+      title: 'Delete fanpage media',
+      description: 'Remove the avatar or cover image. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/fb-fanpages/{id}/media/{media_type}',
+      input: { id: id('Fanpage id.'), media_type: mediaType },
+      guard: 'delete',
+    },
+    'media-ai-prompt': {
+      title: 'Generate fanpage media prompt',
+      description: 'Ask the AI provider for an avatar or cover prompt from the fanpage form values.',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages/{id}/media/ai-prompt',
+      input: { id: id('Fanpage id.'), prompt_type: mediaType },
+      guard: 'confirm',
+    },
+    groups: {
+      title: 'List linked groups',
+      description: 'Groups linked to one fanpage with posting permissions and join state.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/{id}/groups',
+      input: { id: id('Fanpage id.') },
+    },
+    'attach-group': {
+      title: 'Link fanpage group',
+      description: 'Link one group to the fanpage.',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages/{id}/groups',
+      input: {
+        id: id('Fanpage id.'),
+        group_id: id('Group id.'),
+        can_post: flag('Whether the fanpage may post to the group.').optional(),
+        joined: z.union([z.literal(-1), z.literal(0), z.literal(1), z.literal(2)]).optional().describe('Join state; 0 default.'),
+      },
+    },
+    'detach-group': {
+      title: 'Unlink fanpage group',
+      description: 'Remove one group link. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/fb-fanpages/{id}/groups/{group_id}',
+      input: groupPath,
+      guard: 'delete',
+    },
+    'group-status': {
+      title: 'Update fanpage group status',
+      description: 'Update posting permission and join state of one linked group.',
+      method: 'PATCH',
+      path: '/api/v2/fb-fanpages/{id}/groups/{group_id}/status',
+      input: {
+        ...groupPath,
+        can_post: flag('Whether the fanpage may post to the group.').optional(),
+        joined: z.union([z.literal(-1), z.literal(0), z.literal(1), z.literal(2)]).optional().describe('Join state.'),
+      },
+    },
+    'group-search': {
+      title: 'Search groups to link',
+      description: 'Search active groups that can be linked to a fanpage.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/groups/search',
+      query: ['q', 'page'],
+      input: { q: z.string().optional().describe('Group name or UID text.'), page: page() },
+    },
+    assistants: {
+      title: 'List fanpage assistants',
+      description: 'Post assistants attached to one fanpage.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/{id}/assistants',
+      input: { id: id('Fanpage id.') },
+    },
+    stats: {
+      title: 'Get fanpage stats',
+      description: 'Per-fanpage counters and recent activity.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/{id}/stats',
+      input: { id: id('Fanpage id.') },
+    },
+    'matched-posts': {
+      title: 'List matched posts',
+      description: 'Posts matched to one fanpage.',
+      method: 'GET',
+      path: '/api/v2/fb-fanpages/{id}/matched-posts',
+      query: ['page', 'limit'],
+      input: { id: id('Fanpage id.'), page: page(), limit: limit() },
+    },
+    'create-tasks': {
+      title: 'Create fanpage tasks',
+      description: 'Enqueue posting tasks for the fanpage; group_post targets need group ids. Enqueues real automation.',
+      method: 'POST',
+      path: '/api/v2/fb-fanpages/{id}/tasks',
+      input: {
+        id: id('Fanpage id.'),
+        type: z.enum(['fanpage_post', 'group_post']).optional().describe('Defaults to fanpage_post.'),
+        post_type: z.string().optional(),
+        content_type: z.enum(['interaction', 'product', 'video']).optional(),
+        fb_post_id: id('FB post id.').optional(),
+        gr_uid: z.string().optional().describe('Group UID for group_post targets.'),
+        group_ids: z.array(id('Group id.')).optional().describe('Explicit group targets for group_post.'),
+        schedule_type: z.enum(['now', 'later']).optional().describe('Defaults to now; later needs scheduled_at.'),
+        scheduled_at: z.string().optional().describe('Required when schedule_type is later.'),
+        task_count: z.number().int().min(1).max(10).optional().describe('Defaults to 1.'),
+        user_ids: z.array(id('FB account id.')).max(100).optional().describe('Explicit executing accounts.'),
+        su_type: z.enum(['profile', 'fanpage', 'subprofile']).optional(),
+        su_uid: z.string().optional().describe('Target identity, e.g. the fanpage UID.'),
+      },
+      guard: 'confirm',
+    },
+  },
 };
-
-const missingUidSchema = {
-  page: positiveInt.optional(),
-  limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT and the API limit of 1000.'),
-  status: fanpageStatus.optional(),
-  search: z.string().optional(),
-};
-
-const getSchema = {
-  id: positiveInt,
-};
-
-const createSchema = {
-  ...writableFields,
-  fanpage_name: writableFields.fanpage_name,
-  fanpage_link: writableFields.fanpage_link,
-};
-
-const updateSchema = {
-  id: positiveInt,
-  fanpage_name: writableFields.fanpage_name.optional(),
-  fanpage_link: writableFields.fanpage_link.optional(),
-  fanpage_uid: writableFields.fanpage_uid,
-  status: writableFields.status,
-  fb_role: writableFields.fb_role,
-  total_likes: writableFields.total_likes,
-  assistant_ids: writableFields.assistant_ids,
-  fanpage_introduction: writableFields.fanpage_introduction,
-  fanpage_category: writableFields.fanpage_category,
-  fanpage_location: writableFields.fanpage_location,
-  fanpage_website: writableFields.fanpage_website,
-  fanpage_email: writableFields.fanpage_email,
-  fanpage_phone: writableFields.fanpage_phone,
-  ai_instruction: writableFields.ai_instruction,
-  fanpage_cover_prompt: writableFields.fanpage_cover_prompt,
-  fanpage_avatar_prompt: writableFields.fanpage_avatar_prompt,
-  account_ids: writableFields.account_ids,
-  hashtags: writableFields.hashtags,
-  tag_ids: writableFields.tag_ids,
-};
-
-const deleteSchema = {
-  id: positiveInt,
-  confirm: z.boolean().describe('Must be true for deletion.'),
-  reason: z.string().min(1).describe('Human-readable reason for audit context.'),
-  expected_name: z.string().min(1).optional().describe('Optional fanpage_name guard checked before delete.'),
-};
-
-type ListInput = z.infer<z.ZodObject<typeof listSchema>>;
-type SearchInput = z.infer<z.ZodObject<typeof searchSchema>>;
-type MissingUidInput = z.infer<z.ZodObject<typeof missingUidSchema>>;
-type GetInput = z.infer<z.ZodObject<typeof getSchema>>;
-type CreateInput = z.infer<z.ZodObject<typeof createSchema>>;
-type UpdateInput = z.infer<z.ZodObject<typeof updateSchema>>;
-type DeleteInput = z.infer<z.ZodObject<typeof deleteSchema>>;
 
 export function registerFbFanpageTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
-  server.registerTool(
-    'list_fb_fanpages',
-    {
-      title: 'List FB fanpages',
-      description: 'List kkAuto API v2 FB fanpages with optional filters.',
-      inputSchema: listSchema,
-    },
-    async (input: ListInput) => {
-      const response = await client.get<ApiEnvelope>('/api/v2/fb-fanpages', {
-        query: { ...input, limit: appliedLimit(input.limit, config) },
-      });
-
-      return jsonResult(response ?? { status: 'success', data: [], pagination: null });
-    },
-  );
-
-  server.registerTool(
-    'search_fb_fanpages',
-    {
-      title: 'Search FB fanpages',
-      description: 'Search kkAuto API v2 FB fanpages by text, or fetch one fanpage by exact lookup type and value.',
-      inputSchema: searchSchema,
-    },
-    async (input: SearchInput) => {
-      const hasQuery = input.q !== undefined;
-      const hasLookup = input.type !== undefined && input.value !== undefined;
-
-      if (!hasQuery && !hasLookup) {
-        throw new Error('search_fb_fanpages requires either q or both type and value');
-      }
-
-      if (hasQuery && (input.type !== undefined || input.value !== undefined)) {
-        throw new Error('search_fb_fanpages accepts either q or type+value, not both');
-      }
-
-      const response = await client.get<ApiEnvelope>('/api/v2/fb-fanpages/search', {
-        query: { ...input, limit: appliedLimit(input.limit, config) },
-      });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'list_fb_fanpages_missing_uid',
-    {
-      title: 'List FB fanpages missing UID',
-      description: 'List kkAuto API v2 FB fanpages that do not have a Facebook Page UID yet.',
-      inputSchema: missingUidSchema,
-    },
-    async (input: MissingUidInput) => {
-      const response = await client.get<ApiEnvelope>('/api/v2/fb-fanpages/missing-uid', {
-        query: { ...input, limit: appliedLimit(input.limit, config) },
-      });
-
-      return jsonResult(response ?? { status: 'success', data: [], pagination: null });
-    },
-  );
-
-  server.registerTool(
-    'get_fb_fanpage',
-    {
-      title: 'Get FB fanpage',
-      description: 'Get one kkAuto API v2 FB fanpage by id.',
-      inputSchema: getSchema,
-    },
-    async (input: GetInput) => {
-      const response = await client.get<ApiEnvelope>(`/api/v2/fb-fanpages/${input.id}`);
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'create_fb_fanpage',
-    {
-      title: 'Create FB fanpage',
-      description: 'Create one kkAuto API v2 FB fanpage with optional info fields and account/hashtag/tag relations.',
-      inputSchema: createSchema,
-    },
-    async (input: CreateInput) => {
-      const response = await client.post<ApiEnvelope>('/api/v2/fb-fanpages', { body: pruneUndefined(input) });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'update_fb_fanpage',
-    {
-      title: 'Update FB fanpage',
-      description:
-        'Partial update of one kkAuto API v2 FB fanpage. Only supplied fields change; relation fields replace their sets when present.',
-      inputSchema: updateSchema,
-    },
-    async (input: UpdateInput) => {
-      const { id, ...fields } = input;
-      const payload = pruneUndefined(fields);
-
-      if (Object.keys(payload).length === 0) {
-        throw new Error('At least one field is required for update_fb_fanpage');
-      }
-
-      const response = await client.put<ApiEnvelope>(`/api/v2/fb-fanpages/${id}`, { body: payload });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'delete_fb_fanpage',
-    {
-      title: 'Delete FB fanpage',
-      description: 'Delete one kkAuto API v2 FB fanpage. Disabled unless KK_MCP_ENABLE_DELETE=true.',
-      inputSchema: deleteSchema,
-    },
-    async (input: DeleteInput) =>
-      guardedDelete({
-        client,
-        config,
-        toolName: 'delete_fb_fanpage',
-        id: input.id,
-        getPath: `/api/v2/fb-fanpages/${input.id}`,
-        deletePath: `/api/v2/fb-fanpages/${input.id}`,
-        input,
-        extractName: (data) => (typeof data.fanpage_name === 'string' ? data.fanpage_name : undefined),
-      }),
-  );
+  registerResourceTools(server, client, config, fbFanpageSpec);
 }

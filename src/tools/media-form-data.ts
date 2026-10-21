@@ -73,6 +73,18 @@ function mimeTypeForPath(filePath: string): string {
   if (lowerPath.endsWith('.gif')) {
     return 'image/gif';
   }
+  if (lowerPath.endsWith('.mp4')) {
+    return 'video/mp4';
+  }
+  if (lowerPath.endsWith('.mov')) {
+    return 'video/quicktime';
+  }
+  if (lowerPath.endsWith('.avi')) {
+    return 'video/x-msvideo';
+  }
+  if (lowerPath.endsWith('.webm')) {
+    return 'video/webm';
+  }
 
-  throw new Error('media_files only supports .jpg, .jpeg, .png, or .gif files.');
+  throw new Error('media_files only supports .jpg, .jpeg, .png, .gif, .mp4, .mov, .avi, or .webm files.');
 }

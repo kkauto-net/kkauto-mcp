@@ -1,7 +1,7 @@
 import { ApiError } from './errors.js';
 import type { ApiRequestOptions, KkAutoMcpConfig } from './types.js';
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export class KkAutoApiClient {
   constructor(private readonly config: KkAutoMcpConfig) {}
@@ -26,7 +26,7 @@ export class KkAutoApiClient {
     return this.request<T>('DELETE', path, options);
   }
 
-  private async request<T>(method: HttpMethod, path: string, options: ApiRequestOptions): Promise<T | null> {
+  async request<T>(method: HttpMethod, path: string, options: ApiRequestOptions = {}): Promise<T | null> {
     if (options.body !== undefined && options.formData !== undefined) {
       throw new Error('KkAutoApiClient request cannot send both JSON body and FormData.');
     }

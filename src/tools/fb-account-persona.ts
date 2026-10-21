@@ -1,14 +1,14 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { KkAutoApiClient } from '../kkauto-api-client.js';
-import type { ApiEnvelope, KkAutoMcpConfig } from '../types.js';
-import { jsonResult, pruneUndefined } from './shared.js';
+import type { KkAutoMcpConfig } from '../types.js';
+import { id } from './schemas.js';
+import { registerResourceTools, type ResourceSpec } from './resource.js';
 
-const positiveInt = z.number().int().positive();
 const maxLength = (max: number) => z.string().max(max);
 const mediaUrl = z
   .union([z.string().max(500), z.null()])
-  .describe('HTTP(S) source URL; empty string clears to null. Must use http:// or https://.')
+  .describe('HTTP(S) source URL; empty string clears to null.')
   .refine((value) => value === null || value.trim() === '' || /^https?:\/\//i.test(value.trim()), {
     message: 'media URLs must use http:// or https://, be an empty string to clear, or null',
   });
@@ -16,7 +16,6 @@ const stringList = z.union([
   z.string(),
   z.array(z.string().max(80)).max(20).describe('Up to 20 items, 80 chars each.'),
 ]);
-
 const year = z.number().int().min(1900).max(2100).nullable().optional();
 
 const familyList = z.union([
@@ -82,12 +81,7 @@ const linksList = z.union([
   z.string(),
 ]);
 
-const getSchema = {
-  id: positiveInt,
-};
-
-const updateSchema = {
-  id: positiveInt,
+const personaFields = {
   display_name: maxLength(190).optional(),
   age_range: maxLength(20).optional(),
   occupation: maxLength(190).optional(),
@@ -111,91 +105,51 @@ const updateSchema = {
   ai_instruction: maxLength(2000).optional().describe('Personal-style AI instruction written by the operator.'),
 };
 
-const boolish = z.union([z.boolean(), z.number().int().min(0).max(1), z.enum(['true', 'false', '0', '1'])]);
+const boolish = z
+  .union([z.boolean(), z.number().int().min(0).max(1), z.enum(['true', 'false', '0', '1'])])
+  .transform((value) => value === true || value === 1 || value === 'true' || value === '1');
 
-const generateSchema = {
-  id: positiveInt,
-  provider_id: positiveInt.optional().describe('Override the AI provider; falls back to the default active provider.'),
-  model_type: z.string().optional().describe('Optional model selector for the resolved provider.'),
-  persona_overrides: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .describe('Per-request persona seed with the writable PUT persona shape; unknown keys are ignored.'),
-  reference_text: z.string().max(4000).optional().describe('Additional reference context, treated as data, not instructions.'),
-  generate_fullname: boolish.optional().describe('Default true. When false, AI-returned display names are dropped.'),
-  merge_data_profile_name: boolish.optional().describe('Default true. May link one unused same-gender Data Profile Name to this account.'),
-  data_profile_gender: z.enum(['male', 'female']).nullable().optional().describe('Gender fallback when social gender is blank or invalid.'),
-  save_data_profile_gender: boolish.optional().describe('Default true. Persists the selected fallback gender after generation succeeds.'),
-};
-
-const normalizeBoolish = (value: boolean | number | 'true' | 'false' | '0' | '1' | undefined): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-  return value === true || value === 1 || value === 'true' || value === '1';
-};
-
-type GetInput = z.infer<z.ZodObject<typeof getSchema>>;
-type UpdateInput = z.infer<z.ZodObject<typeof updateSchema>>;
-type GenerateInput = z.infer<z.ZodObject<typeof generateSchema>>;
-
-export function registerFbAccountPersonaTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
-  server.registerTool(
-    'get_fb_account_persona',
-    {
+export const fbAccountPersonaSpec: ResourceSpec = {
+  name: 'manage_fb_account_persona',
+  title: 'Manage FB account persona',
+  description: 'kkAuto API v2 personae attached to Facebook accounts, including one-click AI generation.',
+  actions: {
+    get: {
       title: 'Get FB account persona',
-      description: 'Get the persona record attached to one kkAuto API v2 FB account.',
-      inputSchema: getSchema,
+      description: 'One persona record by FB account id.',
+      method: 'GET',
+      path: '/api/v2/fb-accounts/{id}/persona',
+      input: { id: id('FB account id.') },
     },
-    async (input: GetInput) => {
-      const response = await client.get<ApiEnvelope>(`/api/v2/fb-accounts/${input.id}/persona`);
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'update_fb_account_persona',
-    {
+    update: {
       title: 'Update FB account persona',
-      description:
-        'Update persona fields of one kkAuto API v2 FB account. Only keys present in the payload are updated; unknown keys are ignored by the API and returned as warnings.',
-      inputSchema: updateSchema,
+      description: 'Update persona fields; only supplied keys change and unknown keys are returned as warnings.',
+      method: 'PUT',
+      path: '/api/v2/fb-accounts/{id}/persona',
+      input: { id: id('FB account id.'), ...personaFields },
     },
-    async (input: UpdateInput) => {
-      const { id, ...fields } = input;
-      const payload = pruneUndefined(fields);
-
-      if (Object.keys(payload).length === 0) {
-        throw new Error('At least one persona field is required for update_fb_account_persona');
-      }
-
-      const response = await client.put<ApiEnvelope>(`/api/v2/fb-accounts/${id}/persona`, { body: payload });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'generate_fb_account_persona',
-    {
+    generate: {
       title: 'Generate FB account persona',
       description:
-        'One-click AI generation that fills missing persona fields and writes a personal-style ai_instruction for one kkAuto API v2 FB account. NOTE: the API calls an AI provider and auto-persists the merged persona, and may link or backfill a Data Profile Name.',
-      inputSchema: generateSchema,
+        'AI-generate missing persona fields and the personal-style ai_instruction, then persist the merge. Calls an AI provider and may link a data profile name.',
+      method: 'POST',
+      path: '/api/v2/fb-accounts/{id}/persona/generate',
+      input: {
+        id: id('FB account id.'),
+        provider_id: id('AI provider id; defaults to the active default.').optional(),
+        model_type: z.string().optional().describe('Optional model selector for the resolved provider.'),
+        persona_overrides: z.record(z.string(), z.unknown()).optional().describe('Persona seed with the writable PUT shape; unknown keys are ignored.'),
+        reference_text: z.string().max(4000).optional().describe('Extra reference context, treated as data, not instructions.'),
+        generate_fullname: boolish.optional().describe('Default true; false drops AI-returned display names.'),
+        merge_data_profile_name: boolish.optional().describe('Default true; may link one unused same-gender data profile name.'),
+        data_profile_gender: z.enum(['male', 'female']).nullable().optional().describe('Gender fallback when social gender is blank or invalid.'),
+        save_data_profile_gender: boolish.optional().describe('Default true; persists the chosen fallback gender.'),
+      },
+      guard: 'confirm',
     },
-    async (input: GenerateInput) => {
-      const { id, ...fields } = input;
-      const payload = pruneUndefined({
-        ...fields,
-        generate_fullname: normalizeBoolish(fields.generate_fullname),
-        merge_data_profile_name: normalizeBoolish(fields.merge_data_profile_name),
-        save_data_profile_gender: normalizeBoolish(fields.save_data_profile_gender),
-      });
+  },
+};
 
-      const response = await client.post<ApiEnvelope>(`/api/v2/fb-accounts/${id}/persona/generate`, { body: payload });
-
-      return jsonResult(response);
-    },
-  );
+export function registerFbAccountPersonaTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
+  registerResourceTools(server, client, config, fbAccountPersonaSpec);
 }

@@ -1,324 +1,188 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { KkAutoApiClient } from '../kkauto-api-client.js';
-import type { ApiEnvelope, KkAutoMcpConfig } from '../types.js';
-import { buildImageFilesFormData } from './media-form-data.js';
-import { appliedLimit, guardedDelete, jsonResult, pruneUndefined } from './shared.js';
+import type { KkAutoMcpConfig } from '../types.js';
+import { flag, id, limit, page, search, sortOrder } from './schemas.js';
+import { registerResourceTools, type ResourceSpec } from './resource.js';
 
-const positiveInt = z.number().int().positive();
-const binaryFlag = z.union([z.literal(0), z.literal(1)]);
-const barcode = z.string().min(1).describe('Product barcode. Stored lowercase by the API.');
+const barcode = z.string().min(1).describe('Product barcode; stored lowercase by the API.');
 const positivePrice = z.number().positive().describe('Positive numeric value.');
-const hashtags = z.union([z.string(), z.array(z.string().min(1))]).optional();
-
-const listSchema = {
-  page: positiveInt.optional(),
-  limit: positiveInt.optional().describe('Items per page. Capped by KK_MCP_MAX_LIST_LIMIT and the API limit of 1500.'),
-  search: z.string().optional().describe('Searches product name, barcode, and description.'),
-  category: z.string().optional().describe('Category-name filter.'),
-  min_price: z.number().nonnegative().optional(),
-  max_price: z.number().nonnegative().optional(),
-  sort_by: z.string().optional().describe('Sort column. Defaults to created_at.'),
-  sort_order: z.enum(['ASC', 'DESC']).optional().describe('Sort direction. Defaults to DESC.'),
-};
 
 const relationFields = {
-  categories: z.array(positiveInt).optional().describe('Category ids synced as product relations; presence replaces the set.'),
-  hashtags,
-  attributes: z.record(z.string(), z.unknown()).optional().describe('Product attributes object; presence replaces the set.'),
+  categories: z.array(id('Category id.')).optional().describe('Category ids; presence replaces the set.'),
+  hashtags: z.union([z.string(), z.array(z.string().min(1))]).optional(),
+  attributes: z.record(z.string(), z.unknown()).optional().describe('Attribute map; presence replaces the set.'),
   images: z.array(z.string().url()).max(15).optional().describe('Remote image URLs downloaded by the API; presence replaces the set.'),
 };
 
-const createSchema = {
-  barcode,
-  name: z.string().min(1),
-  list_price: positivePrice,
-  price: positivePrice,
-  main_barcode: z.string().optional().describe('Defaults to barcode when omitted.'),
-  description: z.string().optional(),
-  allow_post: binaryFlag.optional().describe('0 or 1. Defaults to 0.'),
-  ...relationFields,
-};
-
-const updateSchema = {
-  id: positiveInt,
+const mutableFields = {
   name: z.string().min(1).optional(),
   list_price: positivePrice.optional(),
   price: positivePrice.optional(),
   description: z.string().optional(),
-  allow_post: binaryFlag.optional(),
+  allow_post: flag('0 or 1.').optional(),
   ...relationFields,
 };
 
-const updateByBarcodeSchema = {
-  barcode,
-  name: z.string().min(1).optional(),
-  list_price: positivePrice.optional(),
-  price: positivePrice.optional(),
-  description: z.string().optional(),
-  allow_post: binaryFlag.optional(),
-  ...relationFields,
-};
+const mediaFiles = z.array(z.string().min(1)).min(1).max(15).describe('Local image file paths on the MCP client machine.');
 
-const getSchema = {
-  id: positiveInt,
+export const productSpec: ResourceSpec = {
+  name: 'manage_product',
+  title: 'Manage products',
+  description: 'kkAuto API v2 products: CRUD by id or barcode, images, categories, and post flags.',
+  actions: {
+    list: {
+      title: 'List products',
+      description: 'Paginated product list with search, category, and price filters.',
+      method: 'GET',
+      path: '/api/v2/products',
+      query: ['page', 'limit', 'search', 'category', 'min_price', 'max_price', 'sort_by', 'sort_order'],
+      input: {
+        page: page(),
+        limit: limit(),
+        search: search('Matches product name, barcode, and description.'),
+        category: z.string().optional().describe('Category-name filter.'),
+        min_price: z.number().nonnegative().optional(),
+        max_price: z.number().nonnegative().optional(),
+        sort_by: z.string().optional().describe('Sort column. Defaults to created_at.'),
+        sort_order: sortOrder(),
+      },
+    },
+    get: {
+      title: 'Get product',
+      description: 'One product by id.',
+      method: 'GET',
+      path: '/api/v2/products/{id}',
+      input: { id: id('Product id.') },
+    },
+    'get-by-barcode': {
+      title: 'Get product by barcode',
+      description: 'One product by barcode.',
+      method: 'GET',
+      path: '/api/v2/products/barcode/{barcode}',
+      input: { barcode },
+    },
+    categories: {
+      title: 'List product categories',
+      description: 'Active product categories.',
+      method: 'GET',
+      path: '/api/v2/products/categories',
+      input: {},
+    },
+    random: {
+      title: 'Random product',
+      description: 'Random products for post seeding.',
+      method: 'GET',
+      path: '/api/v2/products/random',
+      query: ['limit'],
+      input: { limit: limit() },
+    },
+    create: {
+      title: 'Create product',
+      description: 'Create one product; remote image URLs are downloaded and MIME-checked by the API.',
+      method: 'POST',
+      path: '/api/v2/products',
+      input: {
+        barcode,
+        name: z.string().min(1),
+        list_price: positivePrice,
+        price: positivePrice,
+        main_barcode: z.string().optional().describe('Defaults to barcode.'),
+        description: z.string().optional(),
+        allow_post: flag('0 or 1. Defaults to 0.').optional(),
+        ...relationFields,
+      },
+    },
+    update: {
+      title: 'Update product',
+      description: 'Partial update by id; relation fields replace their sets when present.',
+      method: 'PUT',
+      path: '/api/v2/products/{id}',
+      input: { id: id('Product id.'), ...mutableFields },
+    },
+    'update-by-barcode': {
+      title: 'Update product by barcode',
+      description: 'Partial update by barcode; relation fields replace their sets when present.',
+      method: 'PUT',
+      path: '/api/v2/products/barcode/{barcode}',
+      input: { barcode, ...mutableFields },
+    },
+    delete: {
+      title: 'Delete product',
+      description: 'Soft-delete one product by id. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/products/{id}',
+      input: { id: id('Product id.') },
+      guard: 'delete',
+    },
+    'toggle-active': {
+      title: 'Toggle product active',
+      description: 'Flip the active flag of one product.',
+      method: 'POST',
+      path: '/api/v2/products/{id}/toggle-active',
+      input: { id: id('Product id.') },
+    },
+    'toggle-allow-post': {
+      title: 'Toggle product allow-post',
+      description: 'Flip the allow_post flag of one product.',
+      method: 'POST',
+      path: '/api/v2/products/{id}/toggle-allow-post',
+      input: { id: id('Product id.') },
+    },
+    'main-image': {
+      title: 'Set product main image',
+      description: 'Mark one product image as the main image.',
+      method: 'POST',
+      path: '/api/v2/products/{id}/main-image',
+      input: { id: id('Product id.'), image_id: id('Product image id.') },
+    },
+    'upload-images': {
+      title: 'Upload product images',
+      description: 'Upload local images to one product by id (multipart, images[] field).',
+      method: 'POST',
+      path: '/api/v2/products/{id}/images',
+      body: 'form',
+      filesField: 'images[]',
+      input: { id: id('Product id.'), media_files: mediaFiles },
+    },
+    'upload-images-by-barcode': {
+      title: 'Upload product images by barcode',
+      description: 'Upload local images to one product by barcode (multipart, images[] field).',
+      method: 'POST',
+      path: '/api/v2/products/barcode/{barcode}/images',
+      body: 'form',
+      filesField: 'images[]',
+      input: { barcode, media_files: mediaFiles },
+    },
+    'delete-images': {
+      title: 'Delete product images',
+      description: 'Delete all images of one product by id. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/products/{id}/images',
+      input: { id: id('Product id.') },
+      guard: 'delete',
+    },
+    'delete-images-by-barcode': {
+      title: 'Delete product images by barcode',
+      description: 'Delete all images of one product by barcode. Requires KK_MCP_ENABLE_DELETE.',
+      method: 'DELETE',
+      path: '/api/v2/products/barcode/{barcode}/images',
+      input: { barcode },
+      guard: 'delete',
+    },
+    'bulk-delete': {
+      title: 'Bulk delete products',
+      description: 'Delete up to 500 products in one call; unknown ids are skipped.',
+      method: 'POST',
+      path: '/api/v2/products/bulk/delete',
+      input: {
+        ids: z.array(id('Product id.')).min(1).max(500).describe('Products to delete (maximum 500).'),
+      },
+      guard: 'confirm',
+    },
+  },
 };
-
-const getByBarcodeSchema = {
-  barcode,
-};
-
-const deleteSchema = {
-  id: positiveInt,
-  confirm: z.boolean().describe('Must be true for deletion.'),
-  reason: z.string().min(1).describe('Human-readable reason for audit context.'),
-  expected_name: z.string().min(1).optional().describe('Optional product name guard checked before delete.'),
-};
-
-const uploadImagesSchema = {
-  id: positiveInt,
-  media_files: z.array(z.string().min(1)).describe('Local image file paths on the MCP client machine for direct multipart upload.'),
-};
-
-const uploadImagesByBarcodeSchema = {
-  barcode,
-  media_files: z.array(z.string().min(1)).describe('Local image file paths on the MCP client machine for direct multipart upload.'),
-};
-
-const deleteImagesSchema = {
-  id: positiveInt,
-  confirm: z.boolean().describe('Must be true for deletion.'),
-  reason: z.string().min(1).describe('Human-readable reason for audit context.'),
-};
-
-const deleteImagesByBarcodeSchema = {
-  barcode,
-  confirm: z.boolean().describe('Must be true for deletion.'),
-  reason: z.string().min(1).describe('Human-readable reason for audit context.'),
-};
-
-type ListInput = z.infer<z.ZodObject<typeof listSchema>>;
-type CreateInput = z.infer<z.ZodObject<typeof createSchema>>;
-type UpdateInput = z.infer<z.ZodObject<typeof updateSchema>>;
-type UpdateByBarcodeInput = z.infer<z.ZodObject<typeof updateByBarcodeSchema>>;
-type GetInput = z.infer<z.ZodObject<typeof getSchema>>;
-type GetByBarcodeInput = z.infer<z.ZodObject<typeof getByBarcodeSchema>>;
-type DeleteInput = z.infer<z.ZodObject<typeof deleteSchema>>;
-type UploadImagesInput = z.infer<z.ZodObject<typeof uploadImagesSchema>>;
-type UploadImagesByBarcodeInput = z.infer<z.ZodObject<typeof uploadImagesByBarcodeSchema>>;
-type DeleteImagesInput = z.infer<z.ZodObject<typeof deleteImagesSchema>>;
-type DeleteImagesByBarcodeInput = z.infer<z.ZodObject<typeof deleteImagesByBarcodeSchema>>;
 
 export function registerProductTools(server: McpServer, client: KkAutoApiClient, config: KkAutoMcpConfig): void {
-  server.registerTool(
-    'list_products',
-    {
-      title: 'List products',
-      description: 'List kkAuto API v2 products with optional filters. Does not expose the random endpoint.',
-      inputSchema: listSchema,
-    },
-    async (input: ListInput) => {
-      const response = await client.get<ApiEnvelope>('/api/v2/products', {
-        query: { ...input, limit: appliedLimit(input.limit, config) },
-      });
-
-      return jsonResult(response ?? { status: 'success', data: [], pagination: null });
-    },
-  );
-
-  server.registerTool(
-    'get_product',
-    {
-      title: 'Get product',
-      description: 'Get one kkAuto API v2 product by id.',
-      inputSchema: getSchema,
-    },
-    async (input: GetInput) => {
-      const response = await client.get<ApiEnvelope>(`/api/v2/products/${input.id}`);
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'get_product_by_barcode',
-    {
-      title: 'Get product by barcode',
-      description: 'Get one kkAuto API v2 product by barcode.',
-      inputSchema: getByBarcodeSchema,
-    },
-    async (input: GetByBarcodeInput) => {
-      const response = await client.get<ApiEnvelope>(`/api/v2/products/barcode/${encodeURIComponent(input.barcode)}`);
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'list_product_categories',
-    {
-      title: 'List product categories',
-      description: 'List active kkAuto API v2 product categories.',
-      inputSchema: {},
-    },
-    async () => {
-      const response = await client.get<ApiEnvelope>('/api/v2/products/categories');
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'create_product',
-    {
-      title: 'Create product',
-      description:
-        'Create one kkAuto API v2 product. Remote image URLs supplied in images are downloaded and MIME-checked by the API.',
-      inputSchema: createSchema,
-    },
-    async (input: CreateInput) => {
-      const response = await client.post<ApiEnvelope>('/api/v2/products', { body: pruneUndefined(input) });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'update_product',
-    {
-      title: 'Update product',
-      description:
-        'Update one kkAuto API v2 product by id. Fields not supplied are omitted; categories, attributes, images, and hashtags replace their relation sets when present.',
-      inputSchema: updateSchema,
-    },
-    async (input: UpdateInput) => {
-      const { id, ...fields } = input;
-      const payload = pruneUndefined(fields);
-
-      if (Object.keys(payload).length === 0) {
-        throw new Error('At least one field is required for update_product');
-      }
-
-      const response = await client.put<ApiEnvelope>(`/api/v2/products/${id}`, { body: payload });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'update_product_by_barcode',
-    {
-      title: 'Update product by barcode',
-      description:
-        'Update one kkAuto API v2 product by barcode. Fields not supplied are omitted; relation fields replace their sets when present.',
-      inputSchema: updateByBarcodeSchema,
-    },
-    async (input: UpdateByBarcodeInput) => {
-      const { barcode: productBarcode, ...fields } = input;
-      const payload = pruneUndefined(fields);
-
-      if (Object.keys(payload).length === 0) {
-        throw new Error('At least one field is required for update_product_by_barcode');
-      }
-
-      const response = await client.put<ApiEnvelope>(
-        `/api/v2/products/barcode/${encodeURIComponent(productBarcode)}`,
-        { body: payload },
-      );
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'delete_product',
-    {
-      title: 'Delete product',
-      description: 'Soft-delete one kkAuto API v2 product by id. Disabled unless KK_MCP_ENABLE_DELETE=true.',
-      inputSchema: deleteSchema,
-    },
-    async (input: DeleteInput) =>
-      guardedDelete({
-        client,
-        config,
-        toolName: 'delete_product',
-        id: input.id,
-        getPath: `/api/v2/products/${input.id}`,
-        deletePath: `/api/v2/products/${input.id}`,
-        input,
-        extractName: (data) => (typeof data.name === 'string' ? data.name : undefined),
-      }),
-  );
-
-  server.registerTool(
-    'upload_product_images',
-    {
-      title: 'Upload product images',
-      description: 'Upload local images to a kkAuto API v2 product by id. Multipart with an images[] file field.',
-      inputSchema: uploadImagesSchema,
-    },
-    async (input: UploadImagesInput) => {
-      const response = await client.post<ApiEnvelope>(`/api/v2/products/${input.id}/images`, {
-        formData: await buildImageFilesFormData(input.media_files),
-      });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'upload_product_images_by_barcode',
-    {
-      title: 'Upload product images by barcode',
-      description: 'Upload local images to a kkAuto API v2 product by barcode. Multipart with an images[] file field.',
-      inputSchema: uploadImagesByBarcodeSchema,
-    },
-    async (input: UploadImagesByBarcodeInput) => {
-      const response = await client.post<ApiEnvelope>(`/api/v2/products/barcode/${encodeURIComponent(input.barcode)}/images`, {
-        formData: await buildImageFilesFormData(input.media_files),
-      });
-
-      return jsonResult(response);
-    },
-  );
-
-  server.registerTool(
-    'delete_product_images',
-    {
-      title: 'Delete product images',
-      description: 'Delete all images of a kkAuto API v2 product by id. Disabled unless KK_MCP_ENABLE_DELETE=true.',
-      inputSchema: deleteImagesSchema,
-    },
-    async (input: DeleteImagesInput) =>
-      guardedDelete({
-        client,
-        config,
-        toolName: 'delete_product_images',
-        id: input.id,
-        getPath: `/api/v2/products/${input.id}`,
-        deletePath: `/api/v2/products/${input.id}/images`,
-        input,
-        extractName: (data) => (typeof data.name === 'string' ? data.name : undefined),
-      }),
-  );
-
-  server.registerTool(
-    'delete_product_images_by_barcode',
-    {
-      title: 'Delete product images by barcode',
-      description: 'Delete all images of a kkAuto API v2 product by barcode. Disabled unless KK_MCP_ENABLE_DELETE=true.',
-      inputSchema: deleteImagesByBarcodeSchema,
-    },
-    async (input: DeleteImagesByBarcodeInput) =>
-      guardedDelete({
-        client,
-        config,
-        toolName: 'delete_product_images_by_barcode',
-        id: input.barcode,
-        getPath: `/api/v2/products/barcode/${encodeURIComponent(input.barcode)}`,
-        deletePath: `/api/v2/products/barcode/${encodeURIComponent(input.barcode)}/images`,
-        input,
-        extractName: (data) => (typeof data.name === 'string' ? data.name : undefined),
-      }),
-  );
+  registerResourceTools(server, client, config, productSpec);
 }
