@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   const client = new KkAutoApiClient(config);
   const server = new McpServer({
     name: 'kkauto-mcp',
-    version: '0.5.0',
+    version: '0.6.0',
   });
 
   registerAllTools(server, client, config);
