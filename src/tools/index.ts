@@ -4,6 +4,7 @@ import type { KkAutoMcpConfig } from '../types.js';
 import { registerResourceTools, type ResourceSpec } from './resource.js';
 import { registerCapabilityTools } from './capabilities.js';
 import { mobileFarmSpec, proxySpec } from './infrastructure.js';
+import { registerSourceWorkflowTools } from './source-workflows.js';
 import { affiliateProductSpec } from './affiliate.js';
 import { aiProviderSpec, fbPostAssistantSpec, fbAiManagerSpec } from './ai-config.js';
 import { captchaServiceSpec } from './captcha.js';
@@ -93,6 +94,9 @@ export function registerAllTools(server: McpServer, client: KkAutoApiClient, con
   for (const spec of RESOURCE_SPECS) {
     registerResourceTools(server, client, config, spec);
   }
+
+  // Source Workflow claim tools stay explicit: they implement a claim protocol, not CRUD.
+  registerSourceWorkflowTools(server, client, config);
 
   registerCapabilityTools(server, client, config);
 }

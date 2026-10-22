@@ -31,8 +31,9 @@ function register() {
 test('registers every grouped tool exactly once', () => {
   const names = register();
 
-  // 45 grouped specs + the get_api_capabilities discovery tool.
-  assert.equal(names.length, RESOURCE_SPECS.length + 1);
+  // Grouped specs + the six explicit Source Workflow claim tools + get_api_capabilities.
+  assert.ok(names.includes('claim_source_workflow_posts'), 'Source Workflow claim tools must stay registered');
+  assert.equal(names.length, RESOURCE_SPECS.length + 6 + 1);
   assert.equal(new Set(names).size, names.length, 'tool names must be unique');
   assert.ok(names.includes('manage_config'));
   assert.ok(names.includes('manage_fb_post'));

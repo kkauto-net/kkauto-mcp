@@ -10,7 +10,7 @@ The adapter stays thin by design: it uses the same `/api/v2/*` routes as normal 
 
 - Transport: stdio only.
 - API source of truth: all documented `/api/v2/*` families, listed by `GET /api/v2/system/capabilities` and mirrored in `src/tools/index.ts` (`RESOURCE_SPECS`).
-- Tool model: 45 grouped `manage_<singular_resource>` tools plus `get_api_capabilities`. Each grouped tool takes an `action` discriminator whose schema is strict per action.
+- Tool model: 47 grouped `manage_<singular_resource>` tools, six explicit Source Workflow claim tools, and `get_api_capabilities` — 54 tools in total. Each grouped tool takes an `action` discriminator whose schema is strict per action.
 - Tenant resolution: `KK_API_BASE_URL` host/subdomain.
 - Token source: `/wtadmin/mcp` quick `MCPToken` generation or `/wtadmin/token?type=api` API token management.
 - Scopes: the token must carry `apiv2`; config writes, `system/*` writes, credential reveal and user/token/permission mutation additionally need `apiv2.admin` (the token issued by `/wtadmin/mcp` has both).
@@ -21,11 +21,11 @@ The adapter stays thin by design: it uses the same `/api/v2/*` routes as normal 
 - Node.js 20 or newer.
 - Active kkAuto API token from `/wtadmin/mcp` or `/wtadmin/token?type=api`.
 - Tenant-aware base URL for SaaS, or the selfhost app base URL.
-- npm/npx access to the published `@kkauto/kkauto-mcp@0.6.0`, or a local checkout for development.
+- npm/npx access to the published `@kkauto/kkauto-mcp@0.6.1`, or a local checkout for development.
 
 ## Client Setup With npx
 
-The current package release is `@kkauto/kkauto-mcp@0.6.0`, so MCP clients can run it with `npx` without copying the website repository:
+The current package release is `@kkauto/kkauto-mcp@0.6.1`, so MCP clients can run it with `npx` without copying the website repository:
 
 Recommended setup:
 
