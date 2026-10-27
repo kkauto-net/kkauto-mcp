@@ -282,26 +282,67 @@ export const fbPostAssistantSpec: ResourceSpec = {
   },
 };
 
+const jsonObjectOrString = (what: string) =>
+  z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe(`${what}: JSON object or JSON string.`);
+const commentSurfaces = z
+  .union([z.array(z.string()), z.record(z.string(), z.unknown()), z.string()])
+  .optional()
+  .describe('Allowed comment surfaces: string list, map or JSON string.');
+const modelAssistant = z.union([z.string(), z.number()]).optional().describe('Assistant name/key at the provider.');
+const customApiUrl = z.union([z.string().url(), z.literal('')]).optional().describe('Custom API URL; empty clears it.');
+const managerHashtags = z.array(z.number().int().positive()).optional().describe('Hashtag ids used as the topic filter.');
+const engagementRules = z
+  .array(z.record(z.string(), z.unknown()))
+  .optional()
+  .describe(
+    'Engagement rules: surface, match_mode, min_views, min_likes, min_comments, priority, first_comment_instruction, cooldown_minutes, max_per_post, is_active. Presence replaces the rule set.',
+  );
+
 const aiManagerBody = {
   ai_type: z.string().describe('AI type, e.g. comment.'),
   title: z.string().min(1).max(255).describe('Config title.'),
-  comment_surfaces: z.record(z.string(), z.unknown()).optional().describe('Which surfaces the AI may comment on.'),
+  comment_surfaces: commentSurfaces,
   product_mode: z.string().optional().describe('Product mode.'),
   seed_context: z.string().optional().describe('Seed context text.'),
   system_instructions: z.string().optional().describe('System instructions.'),
   model_type: z.string().optional().describe('Model id.'),
   provider_id: id('AI provider id.').optional(),
-  model_assistant: z.string().optional().describe('Assistant name/key at the provider.'),
+  model_assistant: modelAssistant,
   assistant_key: z.string().optional().describe('Assistant key.'),
   use_default: flag('Use the default provider.').optional(),
-  api_url: z.string().url().optional().describe('Custom API URL.'),
+  api_url: customApiUrl,
   is_active: flag('Active flag.').optional(),
   is_default: flag('Default-config flag.').optional(),
   image_category_id: id('Image category id.').optional(),
-  image_text_config: z.record(z.string(), z.unknown()).optional().describe('Image text overlay config.'),
-  extra_config: z.record(z.string(), z.unknown()).optional().describe('Extra config.'),
+  image_text_config: jsonObjectOrString('Image text overlay config'),
+  extra_config: jsonObjectOrString('Extra config'),
   pipeline_enabled: flag('Pipeline enabled flag.').optional(),
-  pipeline_config: z.record(z.string(), z.unknown()).optional().describe('Pipeline config.'),
+  pipeline_config: jsonObjectOrString('Pipeline config'),
+  hashtags: managerHashtags,
+  engagement_rules: engagementRules,
+};
+
+/** Shared by test-result / test-run / test-group-review. */
+const commentTestBody = {
+  postContent: z.string().min(1).optional().describe('Sample post text; providing it runs a live test.'),
+  post_content: z.string().min(1).optional().describe('Alias of postContent.'),
+  content: z.string().min(1).optional().describe('Alias of postContent.'),
+  post_text: z.string().min(1).optional().describe('Alias of postContent.'),
+  text: z.string().min(1).optional().describe('Alias of postContent.'),
+  postAuthor: z.string().optional().describe('Sample author name.'),
+  groupName: z.string().optional().describe('Sample group name.'),
+  postLikeCount: z.number().int().min(0).optional().describe('Sample like count.'),
+  postCommentCount: z.number().int().min(0).optional().describe('Sample comment count.'),
+  postShareCount: z.number().int().min(0).optional().describe('Sample share count.'),
+  postComments: z.array(z.record(z.string(), z.unknown())).optional().describe('Existing comments on the sample post.'),
+  account_id: id('Account id used for the test run.').optional(),
+  first_comment_in_group: flag('Treat the sample as the first comment in the group.').optional(),
+  test_mode: z.enum(['config', 'general']).optional().describe('Pipeline to run; default config.'),
+  dry_run: flag('Dry run: return the verdict without persisting last_test_*.').optional(),
+  success: flag('Record a manual test result (0|1) instead of running a live test.').optional(),
+  message: z.string().optional().describe('Message stored with a manual test result.'),
+  config_hash: z.string().optional().describe('Config hash stored with a manual test result.'),
+  context: z.record(z.string(), z.unknown()).optional().describe('Free-form test context.'),
 };
 
 export const fbAiManagerSpec: ResourceSpec = {
@@ -342,30 +383,14 @@ export const fbAiManagerSpec: ResourceSpec = {
     },
     update: {
       title: 'Update AI manager config',
-      description: 'Update config fields; omitted keys are kept.',
+      description: 'Update config fields; omitted keys are kept. hashtags/engagement_rules replace their sets when sent.',
       method: 'PUT',
       path: '/api/v2/fb-ai-manager/{id}',
       input: {
+        ...aiManagerBody,
         id: id('Config id.'),
         ai_type: z.string().optional().describe('AI type.'),
         title: z.string().min(1).max(255).optional().describe('Config title.'),
-        comment_surfaces: z.record(z.string(), z.unknown()).optional().describe('Allowed comment surfaces.'),
-        product_mode: z.string().optional().describe('Product mode.'),
-        seed_context: z.string().optional().describe('Seed context text.'),
-        system_instructions: z.string().optional().describe('System instructions.'),
-        model_type: z.string().optional().describe('Model id.'),
-        provider_id: id('AI provider id.').optional(),
-        model_assistant: z.string().optional().describe('Assistant name/key at the provider.'),
-        assistant_key: z.string().optional().describe('Assistant key.'),
-        use_default: flag('Use the default provider.').optional(),
-        api_url: z.string().url().optional().describe('Custom API URL.'),
-        is_active: flag('Active flag.').optional(),
-        is_default: flag('Default-config flag.').optional(),
-        image_category_id: id('Image category id.').optional(),
-        image_text_config: z.record(z.string(), z.unknown()).optional().describe('Image text overlay config.'),
-        extra_config: z.record(z.string(), z.unknown()).optional().describe('Extra config.'),
-        pipeline_enabled: flag('Pipeline enabled flag.').optional(),
-        pipeline_config: z.record(z.string(), z.unknown()).optional().describe('Pipeline config.'),
       },
     },
     delete: {
@@ -408,17 +433,40 @@ export const fbAiManagerSpec: ResourceSpec = {
     },
     'test-result': {
       title: 'Test result generation',
-      description: 'Run the config against a test input and return the generated result.',
+      description:
+        'Run a live test with a sample post (postContent) or record a manual result (success 0|1) and return the verdict.',
       method: 'POST',
       path: '/api/v2/fb-ai-manager/{id}/test-result',
-      input: { id: id('Config id.'), context: z.record(z.string(), z.unknown()).optional().describe('Test context.') },
+      input: { id: id('Config id.'), ...commentTestBody },
+    },
+    'test-run': {
+      title: 'Run comment test',
+      description: 'Alias of test-result: run the comment pipeline on a sample post and return the verdict.',
+      method: 'POST',
+      path: '/api/v2/fb-ai-manager/{id}/test-run',
+      input: { id: id('Config id.'), ...commentTestBody },
+    },
+    versions: {
+      title: 'List config versions',
+      description: 'Version history of one config, newest first.',
+      method: 'GET',
+      path: '/api/v2/fb-ai-manager/{id}/versions',
+      query: ['include_snapshot'],
+      input: { id: id('Config id.'), include_snapshot: flag('Include the full snapshot of each version.').optional() },
+    },
+    revert: {
+      title: 'Revert config version',
+      description: 'Restore the config from one version; the history is kept and a new revert version is appended.',
+      method: 'POST',
+      path: '/api/v2/fb-ai-manager/{id}/revert',
+      input: { id: id('Config id.'), version: z.number().int().positive().describe('Version to restore.') },
     },
     'test-group-review': {
       title: 'Test group review',
-      description: 'Run the group-review pipeline for this config.',
+      description: 'Kept alias: runs the group AI review on a sample post (POST /api/v2/fb-groups/{id}/test-ai); id is the group id.',
       method: 'POST',
-      path: '/api/v2/fb-ai-manager/{id}/test-group-review',
-      input: { id: id('Config id.'), context: z.record(z.string(), z.unknown()).optional().describe('Test context.') },
+      path: '/api/v2/fb-groups/{id}/test-ai',
+      input: { id: id('Group id.'), ...commentTestBody },
     },
     'sample-profile': {
       title: 'Sample profile',

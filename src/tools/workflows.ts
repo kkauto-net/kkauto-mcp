@@ -14,6 +14,11 @@ const activities = z
   .record(z.string(), z.unknown())
   .describe('Activity map keyed by activity type, e.g. {"post_profile":{"enabled":1,"schedules":[...]}}.');
 
+const workflowHashtags = z
+  .array(z.union([z.number().int().positive(), z.record(z.string(), z.unknown())]))
+  .optional()
+  .describe('Hashtag ids, or {id} objects copied from GET. With target_mode=level they also act as the topic filter.');
+
 const workflowBody = {
   name: z.string().min(1).max(255).describe('Workflow name.'),
   content_type: z.enum(['post', 'video']).optional().describe('Content type, default post.'),
@@ -65,7 +70,8 @@ export const accountWorkflowSpec: ResourceSpec = {
         account_ids: z.array(z.number().int().positive()).optional().describe('Accounts for target_mode=accounts.'),
         tag_ids: z.array(z.number().int().positive()).optional().describe('Tags for target_mode=tags.'),
         levels: z.array(z.number().int()).optional().describe('Account levels for target_mode=level.'),
-        hashtag_ids: z.array(z.number().int().positive()).optional().describe('Hashtags for target_mode=hashtags.'),
+        hashtag_ids: workflowHashtags,
+        hashtags: workflowHashtags,
       },
     },
     update: {
@@ -84,7 +90,8 @@ export const accountWorkflowSpec: ResourceSpec = {
         account_ids: z.array(z.number().int().positive()).optional().describe('Accounts for target_mode=accounts.'),
         tag_ids: z.array(z.number().int().positive()).optional().describe('Tags for target_mode=tags.'),
         levels: z.array(z.number().int()).optional().describe('Account levels for target_mode=level.'),
-        hashtag_ids: z.array(z.number().int().positive()).optional().describe('Hashtags for target_mode=hashtags.'),
+        hashtag_ids: workflowHashtags,
+        hashtags: workflowHashtags,
       },
     },
     delete: {

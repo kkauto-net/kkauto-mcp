@@ -27,6 +27,46 @@ const groupFields = {
 
 const hashtagIds = z.array(z.number().int().positive()).optional().describe('Full hashtag id set for the group.');
 
+/** Post settings shared by `update` (partial update) and `settings`. */
+const groupSettingsFields = {
+  approval_mode: z.string().max(16).optional().describe('Post approval mode.'),
+  gr_post: flag('Auto-post flag.').optional(),
+  gr_config_comment: flag('Comment permission.').optional(),
+  gr_config_image: flag('Image posting permission.').optional(),
+  gr_config_scanuid: flag('Scan-uid permission.').optional(),
+  gr_config_scanuid_all: flag('Scan-uid for all members.').optional(),
+  gr_check: flag('Group check flag.').optional(),
+  join_target: z.number().int().min(1).optional().describe('Target member join count.'),
+  assistants_ids: z.array(z.number().int().positive()).optional().describe('Post assistant ids; empty clears.'),
+  hashtag_ids: hashtagIds,
+  hashtags: z
+    .array(z.union([z.number().int().positive(), z.record(z.string(), z.unknown())]))
+    .optional()
+    .describe('Hashtag ids or {id} objects (alias of hashtag_ids).'),
+  category: z.string().max(64).optional().describe('Manual category.'),
+  ai_category: z.string().max(64).optional().describe('AI-assigned category.'),
+  ai_tags: z.union([z.string(), z.array(z.string())]).optional().describe('AI tags: list or JSON string.'),
+};
+
+/** Sample-post review run shared by the group and AI-manager test actions. */
+const groupTestBody = {
+  postContent: z.string().min(1).optional().describe('Sample post text.'),
+  post_content: z.string().min(1).optional().describe('Alias of postContent.'),
+  content: z.string().min(1).optional().describe('Alias of postContent.'),
+  text: z.string().min(1).optional().describe('Alias of postContent.'),
+  postAuthor: z.string().optional().describe('Sample author name.'),
+  postType: z.string().optional().describe('Sample post type.'),
+  images: z.array(z.string()).optional().describe('Sample image URLs.'),
+  videos: z.array(z.string()).optional().describe('Sample video URLs.'),
+  links: z.array(z.string()).optional().describe('Sample links.'),
+  authorId: z.string().optional().describe('Sample author id.'),
+  aiType: z.enum(['system', 'custom']).optional().describe('Provider source.'),
+  providerId: id('AI provider id.').optional(),
+  aiModel: z.string().optional().describe('Model id.'),
+  aiGuidance: z.string().optional().describe('Review guidance prompt.'),
+  aiApiUrl: z.string().optional().describe('Custom API URL.'),
+};
+
 export const fbGroupSpec: ResourceSpec = {
   name: 'manage_fb_group',
   title: 'Manage Facebook groups',
@@ -69,12 +109,13 @@ export const fbGroupSpec: ResourceSpec = {
     },
     update: {
       title: 'Update group',
-      description: 'Update group identity and activity flags.',
+      description: 'Partial update of the group identity, activity flags, post settings and hashtags; omitted keys are kept.',
       method: 'PUT',
       path: '/api/v2/fb-groups/{id}',
       input: {
         id: id('Group id.'),
         ...groupFields,
+        ...groupSettingsFields,
         gr_name: z.string().min(1).max(255).optional().describe('Group name.'),
       },
     },
@@ -83,19 +124,14 @@ export const fbGroupSpec: ResourceSpec = {
       description: 'Update approval, post/comment/image/scan flags, join target, assistants and hashtags.',
       method: 'PUT',
       path: '/api/v2/fb-groups/{id}/settings',
-      input: {
-        id: id('Group id.'),
-        approval_mode: z.string().max(16).optional().describe('Post approval mode.'),
-        gr_post: flag('Auto-post flag.').optional(),
-        gr_config_comment: flag('Comment permission.').optional(),
-        gr_config_image: flag('Image posting permission.').optional(),
-        gr_config_scanuid: flag('Scan-uid permission.').optional(),
-        gr_config_scanuid_all: flag('Scan-uid for all members.').optional(),
-        gr_check: flag('Group check flag.').optional(),
-        join_target: z.number().int().min(1).optional().describe('Target member join count.'),
-        assistants_ids: z.array(z.number().int().positive()).optional().describe('Post assistant ids; empty clears.'),
-        hashtag_ids: hashtagIds,
-      },
+      input: { id: id('Group id.'), ...groupSettingsFields },
+    },
+    'test-ai': {
+      title: 'Test AI review',
+      description: 'Run the group AI review on a sample post and return the verdict without saving anything.',
+      method: 'POST',
+      path: '/api/v2/fb-groups/{id}/test-ai',
+      input: { id: id('Group id.'), ...groupTestBody },
     },
     moderators: {
       title: 'List moderators',
@@ -209,9 +245,11 @@ export const fbGroupSpec: ResourceSpec = {
       description: 'Approve, drop, hold, rerun or manually pass a review-gate entry.',
       method: 'POST',
       path: '/api/v2/fb-groups/{id}/review/action',
+      // `decision` is sent as the API field `action`; `action` is the tool discriminator.
+      bodyNames: { decision: 'action' },
       input: {
         id: id('Group id.'),
-        action: z.enum(['approve', 'drop', 'hold', 'rerun', 'manual']).describe('Review decision.'),
+        decision: z.enum(['approve', 'drop', 'hold', 'rerun', 'manual']).describe('Review decision (API field action).'),
         round: z.union([z.literal(1), z.literal(2)]).optional().describe('Gate round; inferred when omitted.'),
         hashtags: z.array(z.number().int().positive()).optional().describe('Hashtag ids for a manual pass.'),
         rank: z.number().int().optional().describe('Group rank for a manual pass.'),

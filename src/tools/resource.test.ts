@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { KkAutoApiClient } from '../kkauto-api-client.js';
+import { formatApiErrorMessage } from '../errors.js';
 import type { ApiRequestOptions, KkAutoMcpConfig } from '../types.js';
+import { registerAllTools } from './index.js';
 import { registerResourceTools, type ResourceSpec } from './resource.js';
 
 type ToolHandler = (input: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
@@ -109,11 +113,35 @@ test('rejects an unknown action', () => {
   assert.throws(() => tool.schema.parse({ action: 'explode' }), /action/i);
 });
 
-test('requires the path token declared by the action', () => {
+test('requires the path token declared by the action', async () => {
   const { tool } = register();
 
-  assert.throws(() => tool.schema.parse({ action: 'get' }));
+  await assert.rejects(tool.handler(tool.schema.parse({ action: 'get' }) as Record<string, unknown>), /id/);
   assert.deepEqual(tool.schema.parse({ action: 'get', id: 4 }), { action: 'get', id: 4 });
+});
+
+test('publishes one object schema listing every action and field', () => {
+  const { server } = register();
+  const tool = server.tools.get('manage_thing') as unknown as { schema: z.ZodObject<any> };
+  const json = z.toJSONSchema(tool.schema, { io: 'input' }) as {
+    type?: string;
+    properties?: Record<string, { enum?: string[] }>;
+  };
+
+  assert.equal(json.type, 'object');
+  assert.deepEqual(json.properties?.action?.enum?.sort(), ['create', 'delete', 'get', 'list', 'run-now']);
+  // name/id/confirm/reason come from different actions and are merged into one object.
+  for (const field of ['id', 'name', 'search', 'confirm', 'reason', 'expected_name']) {
+    assert.ok(json.properties?.[field] !== undefined, `merged schema must expose ${field}`);
+  }
+});
+
+test('rejects a field the selected action does not declare', async () => {
+  const { tool } = register();
+
+  // The merged schema passes unknown keys through; the per-action schema still refuses them.
+  const parsed = tool.schema.parse({ action: 'get', id: 4, unknown_foo: 123 }) as Record<string, unknown>;
+  await assert.rejects(tool.handler(parsed), /unknown_foo/);
 });
 
 test('forwards declared query fields and caps limit', async () => {
@@ -158,12 +186,19 @@ test('guarded delete sends the request when enabled and echoes the reason', asyn
   assert.equal(JSON.parse(result.content[0].text).reason, 'cleanup');
 });
 
-test('confirm-guarded action requires confirm and a reason at the schema level', () => {
+test('confirm-guarded action requires confirm and a reason at the action level', async () => {
   const { tool } = register();
 
-  assert.throws(() => tool.schema.parse({ action: 'run-now', id: 5 }));
-  assert.throws(() => tool.schema.parse({ action: 'run-now', id: 5, confirm: true }));
-  assert.doesNotThrow(() => tool.schema.parse({ action: 'run-now', id: 5, confirm: true, reason: 'manual run' }));
+  await assert.rejects(tool.handler(tool.schema.parse({ action: 'run-now', id: 5 }) as Record<string, unknown>), /confirm/);
+  await assert.rejects(
+    tool.handler(tool.schema.parse({ action: 'run-now', id: 5, confirm: true }) as Record<string, unknown>),
+    /reason/,
+  );
+  await assert.doesNotReject(
+    tool.handler(
+      tool.schema.parse({ action: 'run-now', id: 5, confirm: true, reason: 'manual run' }) as Record<string, unknown>,
+    ),
+  );
 });
 
 test('confirm-guarded action posts confirm=true in the body', async () => {
@@ -191,4 +226,63 @@ test('refuses to build a spec whose path token has no schema field', () => {
     () => registerResourceTools(server as unknown as McpServer, new FakeClient() as unknown as KkAutoApiClient, config, broken),
     /missing/,
   );
+});
+
+test('tools/list publishes an object schema with the action enum for every manage_* tool', async () => {
+  const server = new McpServer({ name: 'kkauto-test', version: '0.0.0' });
+  registerAllTools(server, new FakeClient() as unknown as KkAutoApiClient, config);
+
+  const client = new Client({ name: 'kkauto-test-client', version: '0.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    const { tools } = await client.listTools();
+    const managed = tools.filter((tool) => tool.name.startsWith('manage_'));
+    assert.ok(managed.length > 40, 'every manage_* family must be listed');
+
+    for (const tool of managed) {
+      const schema = tool.inputSchema as { type?: string; properties?: Record<string, { enum?: string[] }> };
+      const properties = schema.properties ?? {};
+
+      assert.equal(schema.type, 'object', `${tool.name} must publish an object inputSchema`);
+      assert.ok(Object.keys(properties).length > 1, `${tool.name} must publish its action fields`);
+      assert.ok(Array.isArray(properties.action?.enum), `${tool.name} must publish the action enum, got ${JSON.stringify(schema)}`);
+      assert.ok((properties.action?.enum ?? []).length > 0, `${tool.name} action enum must not be empty`);
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test('keeps every field error and the request id from a 422 body', () => {
+  const message = formatApiErrorMessage(422, {
+    status: 'error',
+    code: 'VALIDATION_ERROR',
+    message: 'Validation failed',
+    errors: { title: 'Title is required', pipeline_config: ['must be an object'] },
+    request_id: 'req-1',
+  });
+
+  assert.match(message, /^kkAuto API request failed with HTTP 422: Validation failed/);
+  assert.match(message, /title: Title is required/);
+  assert.match(message, /pipeline_config\.0: must be an object/);
+  assert.match(message, /\[code=VALIDATION_ERROR request_id=req-1\]/);
+});
+
+test('keeps the 409 IN_USE payload in the message', () => {
+  const message = formatApiErrorMessage(409, {
+    status: 'error',
+    code: 'IN_USE',
+    message: 'Hashtag is still in use',
+    data: { profile_name: [8] },
+    request_id: 'req-2',
+    error: { code: 'IN_USE', message: 'Hashtag is still in use', fields: { name: ['used by profile 8'] } },
+  });
+
+  assert.match(message, /^kkAuto API request failed with HTTP 409: Hashtag is still in use/);
+  assert.match(message, /name\.0: used by profile 8/);
+  assert.match(message, /details: \{"profile_name":\[8\]\}/);
+  assert.match(message, /request_id=req-2/);
 });

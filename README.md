@@ -10,7 +10,7 @@ The adapter stays thin by design: it uses the same `/api/v2/*` routes as normal 
 
 - Transport: stdio only.
 - API source of truth: all documented `/api/v2/*` families, listed by `GET /api/v2/system/capabilities` and mirrored in `src/tools/index.ts` (`RESOURCE_SPECS`).
-- Tool model: 47 grouped `manage_<singular_resource>` tools, six explicit Source Workflow claim tools, and `get_api_capabilities` — 54 tools in total. Each grouped tool takes an `action` discriminator whose schema is strict per action.
+- Tool model: 47 grouped `manage_<singular_resource>` tools, six explicit Source Workflow claim tools, and `get_api_capabilities` — 54 tools in total. Each grouped tool takes an `action` discriminator: `tools/list` publishes one JSON Schema object listing every action and field (each description ends with `[Actions: ...]`, `*` = required for that action), and `tools/call` validates the input against that action's strict schema, so a field the action does not declare is an error instead of being dropped.
 - Tenant resolution: `KK_API_BASE_URL` host/subdomain.
 - Token source: `/wtadmin/mcp` quick `MCPToken` generation or `/wtadmin/token?type=api` API token management.
 - Scopes: the token must carry `apiv2`; config writes, `system/*` writes, credential reveal and user/token/permission mutation additionally need `apiv2.admin` (the token issued by `/wtadmin/mcp` has both).
@@ -118,7 +118,7 @@ Every family is one grouped tool. Call it with an `action` plus that action's fi
 
 | Tool | Purpose |
 | --- | --- |
-| `get_api_capabilities` | Enumerate every family with base, scope, MCP tool and live endpoints. Pass `filter` to narrow. |
+| `get_api_capabilities` | Enumerate every family with base, scope, MCP tool, its actions (method, path, query/body/required params, `read_only`, `destructive`) and pagination limits. Pass `filter` to narrow. |
 | `manage_config` | Tenant configuration gateway: `fb.general`, `system.language`, `fb.system-instructions`, `fb.notifications`, `source.collection-rules`, `ig.settings`, `storefront.settings`. Needs `apiv2.admin`. |
 | `manage_admin_user`, `manage_api_token`, `manage_notification`, `manage_storage_backend` | System administration: admin users and 2FA, API tokens, notification centre, storage backends and bindings. Writes need `apiv2.admin`. |
 | `manage_proxy`, `manage_mobile_farm` | Proxy groups/proxies/assignments and the device-family + farm-group + dashboard surface. |

@@ -14,6 +14,20 @@ const hashtagCategories = z
   .string()
   .describe('Hashtag category slug from the categories action.');
 
+const searchKeywords = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .describe('Search keywords: comma/newline separated string or a string list.');
+
+const classifyInstruction = z
+  .string()
+  .max(1000)
+  .optional()
+  .describe('Classification criteria for AI Decisions (max 1000 chars).');
+
+const linkTarget = z.enum(['account', 'fanpage', 'group']).describe('Which link type.');
+const linkIds = z.array(z.number().int().positive()).min(1).max(200).describe('Account, fanpage or group ids.');
+
 export const hashtagSpec: ResourceSpec = {
   name: 'manage_hashtag',
   title: 'Manage hashtags',
@@ -52,7 +66,8 @@ export const hashtagSpec: ResourceSpec = {
         description: z.string().optional().describe('Description.'),
         ai_instruction: z.string().optional().describe('AI instruction text.'),
         train_instruction: z.string().optional().describe('Train instruction text.'),
-        search_keywords: z.string().optional().describe('Comma-separated search keywords.'),
+        classify_instruction: classifyInstruction,
+        search_keywords: searchKeywords,
         category: hashtagCategories.optional(),
         is_active: flag('Active flag.').optional(),
         auto_label: flag('Auto-label flag.').optional(),
@@ -69,7 +84,8 @@ export const hashtagSpec: ResourceSpec = {
         description: z.string().optional().describe('Description.'),
         ai_instruction: z.string().optional().describe('AI instruction text.'),
         train_instruction: z.string().optional().describe('Train instruction text.'),
-        search_keywords: z.string().optional().describe('Comma-separated search keywords.'),
+        classify_instruction: classifyInstruction,
+        search_keywords: searchKeywords,
         category: hashtagCategories.optional(),
         is_active: flag('Active flag.').optional(),
         auto_label: flag('Auto-label flag.').optional(),
@@ -236,27 +252,48 @@ export const hashtagSpec: ResourceSpec = {
     },
     'links-suggest': {
       title: 'Suggest links',
-      description: 'Accounts or fanpages not yet linked to this hashtag.',
+      description: 'Accounts, fanpages or groups not yet linked to this hashtag.',
       method: 'GET',
       path: '/api/v2/hashtags/links/suggest',
-      query: ['hashtag_id', 'target', 'count', 'level'],
+      query: ['hashtag_id', 'id', 'target', 'count', 'level', 'search'],
       input: {
-        hashtag_id: id('Active hashtag id.'),
-        target: z.enum(['account', 'fanpage']).describe('Which link type to suggest.'),
+        hashtag_id: id('Active hashtag id.').optional(),
+        id: id('Alias of hashtag_id.').optional(),
+        target: linkTarget,
         count: z.number().int().min(1).max(200).describe('How many suggestions.'),
         level: z.number().int().min(0).max(4).optional().describe('Account level, required for target=account.'),
+        search: z.string().optional().describe('Text filter for the suggestion pool.'),
       },
     },
     'links-append': {
       title: 'Append links',
-      description: 'Link selected accounts or fanpages to this hashtag.',
+      description: 'Link selected accounts, fanpages or groups to this hashtag.',
       method: 'POST',
       path: '/api/v2/hashtags/{id}/links/append',
       input: {
         id: id('Hashtag id used in the path.'),
-        hashtag_id: id('Hashtag id read from the body; must match id.'),
-        target: z.enum(['account', 'fanpage']).describe('Which link type to append.'),
-        ids: z.array(z.number().int().positive()).min(1).max(200).describe('Account or fanpage ids.'),
+        hashtag_id: id('Hashtag id read from the body; defaults to id.').optional(),
+        target: linkTarget,
+        ids: linkIds,
+      },
+    },
+    'links-list': {
+      title: 'List links',
+      description: 'Accounts, fanpages and groups currently linked to this hashtag.',
+      method: 'GET',
+      path: '/api/v2/hashtags/{id}/links',
+      query: ['target'],
+      input: { id: id('Hashtag id.'), target: linkTarget.optional() },
+    },
+    'links-remove': {
+      title: 'Remove links',
+      description: 'Unlink accounts, fanpages or groups from this hashtag without deleting them.',
+      method: 'POST',
+      path: '/api/v2/hashtags/{id}/links/remove',
+      input: {
+        id: id('Hashtag id.'),
+        target: linkTarget,
+        ids: linkIds,
       },
     },
     'ai-suggestions': {
