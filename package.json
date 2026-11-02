@@ -1,6 +1,6 @@
 {
   "name": "@kkauto/kkauto-mcp",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "description": "MCP stdio adapter for kkAuto API v2 content tools.",
   "repository": {
@@ -28,7 +28,7 @@
     "dev": "tsx src/server.ts",
     "prepack": "npm run build",
     "start": "node dist/server.js",
-    "test": "npm run build && node --test dist/tools/resource.test.js dist/tools/index.test.js dist/config.test.js",
+    "test": "npm run build && node --test dist/tools/resource.test.js dist/tools/index.test.js dist/tools/config.test.js dist/config.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
